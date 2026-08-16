@@ -1,0 +1,995 @@
+openapi: 3.0.3
+info:
+  title: Kamadeva Privé Service API
+  version: 0.1.0
+  description: >
+    Thin Go backend for Kamadeva Privé integrations. Supabase Postgres remains
+    the source of truth for CRUD, RLS, tier logic, discount logic, reservations,
+    Muse rules, and audit guarantees.
+servers:
+  - url: https://api.kamadevaprive.com
+    description: Production
+  - url: http://localhost:8787
+    description: Local development
+tags:
+  - name: Health
+  - name: Samba POS
+  - name: Jobs
+  - name: Reporting
+  - name: Webhooks
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Service health check
+      responses:
+        "200":
+          description: Healthy service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /integrations/pos/samba/heartbeat:
+    post:
+      tags: [Samba POS]
+      summary: Samba POS extension heartbeat
+      description: >
+        Called by each installed Samba POS extension instance on startup and at
+        a fixed interval. If `SAMBA_WEBHOOK_SECRET` is configured, the request
+        must include `X-KP-Signature`.
+      parameters:
+        - $ref: "#/components/parameters/RequestID"
+        - $ref: "#/components/parameters/KPAPISignature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SambaHeartbeat"
+            examples:
+              heartbeat:
+                value:
+                  venue_id: "11111111-1111-4111-8111-111111111111"
+                  terminal_id: "oso-bar-01"
+                  extension_version: "1.0.0"
+                  samba_version: "5.7.0"
+                  observed_at: "2026-08-10T19:15:00+01:00"
+      responses:
+        "200":
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptedResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /integrations/pos/samba/tickets:
+    post:
+      tags: [Samba POS]
+      summary: Ingest a closed Samba POS ticket
+      description: >
+        Called by the Samba POS extension when a ticket is closed or re-synced.
+        The operation is idempotent in Supabase on `(venue_id, ticket_no)`.
+        Re-sending the same ticket updates the header and replaces line items.
+      parameters:
+        - $ref: "#/components/parameters/RequestID"
+        - $ref: "#/components/parameters/KPAPISignature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SambaTicket"
+            examples:
+              ticket:
+                value:
+                  venue_id: "11111111-1111-4111-8111-111111111111"
+                  ticket_no: "OSO-20260810-00042"
+                  external_id: "samba-ticket-guid-or-integer"
+                  occurred_at: "2026-08-10T21:34:12+01:00"
+                  cashier: "Ada"
+                  table_label: "VIP 4"
+                  payment_method: "card"
+                  service_charge_kobo: 0
+                  change_kobo: 0
+                  items:
+                    - name: "HONEY BBQ WINGS"
+                      quantity: 1
+                      unit_price_kobo: 1850000
+                    - name: "CASAMIGOS SHOT"
+                      quantity: 2
+                      unit_price_kobo: 650000
+      responses:
+        "200":
+          description: Ticket accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket_id]
+                properties:
+                  ticket_id:
+                    type: string
+                    format: uuid
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/source-health:
+    get:
+      tags: [Samba POS]
+      summary: Check configured Oso Lounge Samba API source
+      responses:
+        "200":
+          description: Source health
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  samba:
+                    type: string
+                  site:
+                    type: string
+                  database:
+                    type: string
+                  server:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/pull-tickets:
+    post:
+      tags: [Samba POS]
+      summary: Pull tickets from configured Oso Lounge Samba API and import them
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [venue_id, from, to]
+              properties:
+                venue_id:
+                  type: string
+                  format: uuid
+                from:
+                  type: string
+                  format: date
+                to:
+                  type: string
+                  format: date
+            example:
+              venue_id: "11111111-1111-4111-8111-111111111111"
+              from: "2026-07-05"
+              to: "2026-07-06"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, source_count, imported_count, failed_count, tickets]
+                properties:
+                  from:
+                    type: string
+                    format: date
+                  to:
+                    type: string
+                    format: date
+                  source_count:
+                    type: integer
+                  imported_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+                  unmatched_customer_count:
+                    type: integer
+                  tickets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source_id:
+                          type: integer
+                        ticket_number:
+                          type: string
+                        ticket_id:
+                          type: string
+                  failures:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source_id:
+                          type: integer
+                        ticket_number:
+                          type: string
+                        error:
+                          type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/orchestrator:
+    get:
+      tags: [Samba POS]
+      summary: Get Samba transaction orchestrator status
+      responses:
+        "200":
+          description: Orchestrator status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, running]
+                properties:
+                  enabled:
+                    type: boolean
+                  running:
+                    type: boolean
+                  venue_id:
+                    type: string
+                    format: uuid
+                  interval:
+                    type: string
+                  lookback_days:
+                    type: integer
+                  last_started_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  last_finished_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  last_error:
+                    type: string
+                    nullable: true
+                  next_run_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /integrations/pos/samba/orchestrator/run:
+    post:
+      tags: [Samba POS]
+      summary: Trigger one Samba transaction orchestration run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                venue_id:
+                  type: string
+                  format: uuid
+                from:
+                  type: string
+                  format: date
+                to:
+                  type: string
+                  format: date
+            example:
+              venue_id: "11111111-1111-4111-8111-111111111111"
+              from: "2026-07-05"
+              to: "2026-07-06"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, source_count, imported_count, failed_count, tickets]
+                properties:
+                  from:
+                    type: string
+                    format: date
+                  to:
+                    type: string
+                    format: date
+                  source_count:
+                    type: integer
+                  imported_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+                  unmatched_customer_count:
+                    type: integer
+                  tickets:
+                    type: array
+                    items:
+                      type: object
+                  failures:
+                    type: array
+                    items:
+                      type: object
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources:
+    get:
+      tags: [Samba POS]
+      summary: List configured Samba POS sources
+      responses:
+        "200":
+          description: Configured sources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        display_name:
+                          type: string
+                        venue_id:
+                          type: string
+                          format: uuid
+                        orchestrator_enabled:
+                          type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /integrations/pos/samba/sources/{source}/source-health:
+    get:
+      tags: [Samba POS]
+      summary: Check a configured Samba source health
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [oso-lounge, boom-boom-room]
+      responses:
+        "200":
+          description: Source health
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/clean/ticket:
+    get:
+      tags: [Samba POS]
+      summary: Fetch clean tickets from a configured Samba source
+      description: >
+        Proxies the Samba extension clean-ticket endpoint. Use either `from`
+        and `to` for an inclusive date range up to 92 days, or `page` for the
+        newest-first paginated feed with 50 tickets per page. Range reads first
+        import/upsert the same date range into Supabase via `/api/tickets`;
+        if persistence fails, the request fails instead of returning unsaved data.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [oso-lounge, oso, boom-boom-room, bbr]
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          example: "2026-07-05"
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          example: "2026-07-06"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          example: 1
+      responses:
+        "200":
+          description: Clean ticket range or page result
+          headers:
+            X-KP-Import-Source-Count:
+              description: Number of source tickets fetched for a range import.
+              schema:
+                type: integer
+            X-KP-Import-Imported-Count:
+              description: Number of source tickets upserted into Supabase for a range import.
+              schema:
+                type: integer
+            X-KP-Import-Failed-Count:
+              description: Number of source tickets that failed Supabase import for a range import.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/CleanTicketRange"
+                  - $ref: "#/components/schemas/CleanTicketPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/clean/ticket/{ticketNumber}:
+    get:
+      tags: [Samba POS]
+      summary: Fetch one clean ticket from a configured Samba source
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [oso-lounge, oso, boom-boom-room, bbr]
+        - name: ticketNumber
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Clean ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CleanTicket"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/orchestrator:
+    get:
+      tags: [Samba POS]
+      summary: Get a configured Samba source orchestrator status
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [oso-lounge, boom-boom-room]
+      responses:
+        "200":
+          description: Orchestrator status
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /integrations/pos/samba/sources/{source}/orchestrator/run:
+    post:
+      tags: [Samba POS]
+      summary: Trigger one orchestration run for a configured Samba source
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [oso-lounge, oso, boom-boom-room, bbr]
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          example: "2026-07-05"
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          example: "2026-07-06"
+        - name: venue_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                venue_id:
+                  type: string
+                  format: uuid
+                from:
+                  type: string
+                  format: date
+                to:
+                  type: string
+                  format: date
+            example:
+              from: "2026-07-05"
+              to: "2026-07-06"
+      responses:
+        "200":
+          description: Import result
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /jobs/tier-decay-sweep:
+    post:
+      tags: [Jobs]
+      summary: Run the tier decay sweep
+      responses:
+        "200":
+          $ref: "#/components/responses/OK"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /jobs/audit-partitions:
+    post:
+      tags: [Jobs]
+      summary: Ensure an audit partition exists for a month
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [month]
+              properties:
+                month:
+                  type: string
+                  pattern: "^\\d{4}-\\d{2}-01$"
+                  example: "2026-09-01"
+      responses:
+        "200":
+          $ref: "#/components/responses/OK"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /reports/capture-rate:
+    get:
+      tags: [Reporting]
+      summary: Venue capture-rate report
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Capture-rate report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptureRateReport"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /integrations/whatsapp/inbound:
+    post:
+      tags: [Webhooks]
+      summary: Authenticated compatibility alias for WhatsApp inbound webhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              required: [from, text]
+              properties:
+                from:
+                  type: string
+                text:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Accepted"
+
+  /webhooks/whatsapp:
+    get:
+      tags: [Webhooks]
+      security: []
+      summary: Meta WhatsApp webhook verification
+      parameters:
+        - name: hub.mode
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: hub.verify_token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: hub.challenge
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Verification challenge
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Webhooks]
+      security: []
+      summary: Meta WhatsApp inbound and status webhook
+      description: >
+        Validates the Meta signature when WHATSAPP_APP_SECRET is configured,
+        deduplicates inbound message IDs, enqueues accepted messages for
+        asynchronous conversation processing, and tracks delivery statuses.
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: false
+          schema:
+            type: string
+            example: sha256=3c4d...
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          $ref: "#/components/responses/Accepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /integrations/wallet/cards/events:
+    post:
+      tags: [Webhooks]
+      summary: Wallet card provider webhook placeholder
+      requestBody:
+        $ref: "#/components/requestBodies/GenericWebhook"
+      responses:
+        "200":
+          $ref: "#/components/responses/Accepted"
+
+  /integrations/payments/events:
+    post:
+      tags: [Webhooks]
+      summary: Payment provider webhook placeholder
+      requestBody:
+        $ref: "#/components/requestBodies/GenericWebhook"
+      responses:
+        "200":
+          $ref: "#/components/responses/Accepted"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-KP-API-Key
+  parameters:
+    RequestID:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema:
+        type: string
+    KPAPISignature:
+      name: X-KP-Signature
+      in: header
+      required: false
+      description: Required for Samba endpoints when SAMBA_WEBHOOK_SECRET is set.
+      schema:
+        type: string
+        example: "sha256=3c4d..."
+  requestBodies:
+    GenericWebhook:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            required: [event]
+            properties:
+              event:
+                type: string
+              external_id:
+                type: string
+              payload:
+                nullable: true
+  responses:
+    OK:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok]
+            properties:
+              ok:
+                type: boolean
+                example: true
+    Accepted:
+      description: Accepted
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AcceptedResponse"
+    Unauthorized:
+      description: Missing or invalid integration authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationError:
+      description: Invalid request payload
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UpstreamError:
+      description: Supabase or upstream dependency failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      required: [ok, service]
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+          example: kamadeva-api
+    AcceptedResponse:
+      type: object
+      required: [ok, accepted]
+      properties:
+        ok:
+          type: boolean
+        accepted:
+          type: boolean
+        next:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        details:
+          nullable: true
+    SambaHeartbeat:
+      type: object
+      additionalProperties: false
+      required: [venue_id, terminal_id, extension_version]
+      properties:
+        venue_id:
+          type: string
+          format: uuid
+        terminal_id:
+          type: string
+          minLength: 2
+          maxLength: 120
+        extension_version:
+          type: string
+          minLength: 1
+          maxLength: 80
+        samba_version:
+          type: string
+        observed_at:
+          type: string
+          format: date-time
+    SambaTicket:
+      type: object
+      additionalProperties: false
+      required: [venue_id, ticket_no, occurred_at, items]
+      properties:
+        venue_id:
+          type: string
+          format: uuid
+        ticket_no:
+          type: string
+          minLength: 1
+          maxLength: 120
+        external_id:
+          type: string
+          maxLength: 160
+        occurred_at:
+          type: string
+          format: date-time
+        cashier:
+          type: string
+          maxLength: 120
+        table_label:
+          type: string
+          maxLength: 80
+        vat_kobo:
+          type: integer
+          minimum: 0
+        consumption_tax_kobo:
+          type: integer
+          minimum: 0
+        discount_kobo:
+          type: integer
+          minimum: 0
+        service_charge_kobo:
+          type: integer
+          minimum: 0
+          default: 0
+        change_kobo:
+          type: integer
+          minimum: 0
+          default: 0
+        payment_method:
+          type: string
+          maxLength: 80
+        acct_no:
+          type: string
+          maxLength: 80
+        bank_name:
+          type: string
+          maxLength: 120
+        items:
+          type: array
+          minItems: 1
+          maxItems: 250
+          items:
+            $ref: "#/components/schemas/SambaTicketItem"
+    SambaTicketItem:
+      type: object
+      additionalProperties: false
+      required: [name, quantity, unit_price_kobo]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+        unit_price_kobo:
+          type: integer
+          minimum: 0
+    CleanTicketRange:
+      type: object
+      additionalProperties: true
+      required: [from, to, count, tickets]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        count:
+          type: integer
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/CleanTicket"
+    CleanTicketPage:
+      type: object
+      additionalProperties: true
+      required: [page, pageSize, total, totalPages, tickets]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+          example: 50
+        total:
+          type: integer
+        totalPages:
+          type: integer
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/CleanTicket"
+    CleanTicket:
+      type: object
+      additionalProperties: true
+      description: Clean Samba ticket payload returned by the installed Samba extension.
+    CaptureRateReport:
+      type: object
+      required: [from, to, venues]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        venues:
+          type: array
+          items:
+            type: object
+            required: [venue_id, venue_name, total_entries, captured_visits]
+            properties:
+              venue_id:
+                type: string
+                format: uuid
+              venue_name:
+                type: string
+              total_entries:
+                type: integer
+              captured_visits:
+                type: integer
+              capture_rate:
+                type: number
+                nullable: true

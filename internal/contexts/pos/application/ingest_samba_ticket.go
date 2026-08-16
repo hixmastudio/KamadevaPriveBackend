@@ -24,3 +24,14 @@ func (s TicketIngestionService) IngestSambaTicket(ctx context.Context, ticket po
 	}
 	return map[string]string{"ticket_id": id}, nil
 }
+
+func (s TicketIngestionService) AcceptSambaHeartbeat(_ context.Context, heartbeat posdomain.SambaHeartbeat) (map[string]any, error) {
+	if err := heartbeat.Validate(); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"ok":       true,
+		"accepted": true,
+		"next":     "continue syncing closed tickets",
+	}, nil
+}
