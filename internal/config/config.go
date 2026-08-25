@@ -156,8 +156,8 @@ func Load() (Config, error) {
 		if !uuidPattern.MatchString(strings.TrimSpace(cfg.SambaVenueID)) {
 			return Config{}, errors.New("SAMBA_VENUE_ID must be a UUID when SAMBA_ORCHESTRATOR_ENABLED is true")
 		}
-		if cfg.SambaOrchestratorInterval < time.Minute {
-			return Config{}, errors.New("SAMBA_ORCHESTRATOR_POLL_INTERVAL must be at least 1m")
+		if cfg.SambaOrchestratorInterval < time.Second {
+			return Config{}, errors.New("SAMBA_ORCHESTRATOR_POLL_INTERVAL must be at least 1s")
 		}
 		if cfg.SambaOrchestratorLookback < 1 || cfg.SambaOrchestratorLookback > 92 {
 			return Config{}, errors.New("SAMBA_ORCHESTRATOR_LOOKBACK_DAYS must be between 1 and 92")
@@ -178,8 +178,8 @@ func Load() (Config, error) {
 		if !uuidPattern.MatchString(strings.TrimSpace(cfg.BoomBoomRoomVenueID)) {
 			return Config{}, errors.New("BOOM_BOOM_ROOM_SAMBA_VENUE_ID must be a UUID when BOOM_BOOM_ROOM_ORCHESTRATOR_ENABLED is true")
 		}
-		if cfg.BoomBoomRoomOrchestratorInterval < time.Minute {
-			return Config{}, errors.New("BOOM_BOOM_ROOM_ORCHESTRATOR_POLL_INTERVAL must be at least 1m")
+		if cfg.BoomBoomRoomOrchestratorInterval < time.Second {
+			return Config{}, errors.New("BOOM_BOOM_ROOM_ORCHESTRATOR_POLL_INTERVAL must be at least 1s")
 		}
 		if cfg.BoomBoomRoomOrchestratorLookback < 1 || cfg.BoomBoomRoomOrchestratorLookback > 92 {
 			return Config{}, errors.New("BOOM_BOOM_ROOM_ORCHESTRATOR_LOOKBACK_DAYS must be between 1 and 92")

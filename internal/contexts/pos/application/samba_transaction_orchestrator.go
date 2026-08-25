@@ -219,8 +219,9 @@ func (o *SambaTransactionOrchestrator) pullRequest(req SambaTransactionOrchestra
 	from := req.From
 	to := req.To
 	if from == "" || to == "" {
-		toTime := time.Now().AddDate(0, 0, -1)
-		fromTime := time.Now().AddDate(0, 0, -o.cfg.Lookback)
+		now := time.Now()
+		toTime := now
+		fromTime := now.AddDate(0, 0, -o.cfg.Lookback+1)
 		from = fromTime.Format(time.DateOnly)
 		to = toTime.Format(time.DateOnly)
 	}
