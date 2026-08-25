@@ -1,0 +1,22 @@
+name: kamadeva-prive-backend
+
+services:
+  api:
+    env_file:
+      - ../.env
+    environment:
+      API_PORT: ${API_PORT:-8787}
+      SAMBA_CACHE_DIR: /app/var/cache/samba
+    ports:
+      - "${API_PUBLIC_PORT:-8787}:${API_PORT:-8787}"
+    volumes:
+      - samba-cache:/app/var/cache/samba
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- \"http://127.0.0.1:$${API_PORT:-8787}/health\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  samba-cache:

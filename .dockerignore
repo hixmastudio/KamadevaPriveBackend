@@ -1,0 +1,10 @@
+.git
+.agents
+.codex
+.env
+.env.*
+var
+tmp
+*.log
+Dockerfile*
+devops/docker-compose*.yml

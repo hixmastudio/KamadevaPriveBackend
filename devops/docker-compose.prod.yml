@@ -1,0 +1,10 @@
+services:
+  api:
+    image: ${KAMADEVA_IMAGE:-kamadeva-prive-backend:latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: kamadeva-prive-backend-api-prod
+    restart: unless-stopped
+    volumes:
+      - samba-cache:/app/var/cache/samba
