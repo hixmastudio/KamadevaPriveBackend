@@ -17,6 +17,7 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-
 type Config struct {
 	Port                                string
 	APISharedSecret                     string
+	CORSAllowedOrigins                  []string
 	SambaWebhookSecret                  string
 	SambaAPIURL                         string
 	SambaAPIKey                         string
@@ -67,6 +68,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Port:                                valueOrDefault(os.Getenv("API_PORT"), "8787"),
 		APISharedSecret:                     os.Getenv("API_SHARED_SECRET"),
+		CORSAllowedOrigins:                  listFromEnv("CORS_ALLOWED_ORIGINS"),
 		SambaWebhookSecret:                  os.Getenv("SAMBA_WEBHOOK_SECRET"),
 		SambaAPIURL:                         os.Getenv("SAMBA_API_URL"),
 		SambaAPIKey:                         os.Getenv("SAMBA_API_KEY"),
@@ -119,6 +121,11 @@ func Load() (Config, error) {
 	}
 	if len(cfg.APISharedSecret) < 24 {
 		return Config{}, errors.New("API_SHARED_SECRET must be at least 24 characters")
+	}
+	for _, origin := range cfg.CORSAllowedOrigins {
+		if err := validateHTTPURL(origin); err != nil {
+			return Config{}, errors.New("CORS_ALLOWED_ORIGINS must contain valid absolute http(s) origins")
+		}
 	}
 	if cfg.SambaWebhookSecret != "" && len(cfg.SambaWebhookSecret) < 32 {
 		return Config{}, errors.New("SAMBA_WEBHOOK_SECRET must be at least 32 characters when set")
@@ -284,6 +291,22 @@ func boolFromEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+}
+
+func listFromEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			out = append(out, strings.TrimRight(value, "/"))
+		}
+	}
+	return out
 }
 
 func durationFromEnv(key string, fallback time.Duration) time.Duration {

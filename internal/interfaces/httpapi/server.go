@@ -75,7 +75,7 @@ func NewServer(deps Dependencies) http.Handler {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.withRecovery(s.withSecurityHeaders(s.withRequestLog(s.mux))).ServeHTTP(w, r)
+	s.withRecovery(s.withCORS(s.withSecurityHeaders(s.withRequestLog(s.mux)))).ServeHTTP(w, r)
 }
 
 func (s *Server) routes() {
@@ -511,6 +511,31 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	allowedOrigins := map[string]struct{}{}
+	for _, origin := range s.cfg.CORSAllowedOrigins {
+		allowedOrigins[origin] = struct{}{}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/")
+		if _, ok := allowedOrigins[origin]; ok {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-KP-API-Key, X-KP-Signature, X-Request-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Vary", "Origin")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
