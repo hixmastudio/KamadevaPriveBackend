@@ -1,6 +1,24 @@
 name: kamadeva-prive-backend
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: kamadeva-prive-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kamadeva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kamadeva_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-kamadeva}
+    ports:
+      - "${POSTGRES_PUBLIC_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     env_file:
       - ../.env
@@ -11,6 +29,9 @@ services:
       - "${API_PUBLIC_PORT:-8787}:${API_PORT:-8787}"
     volumes:
       - samba-cache:/app/var/cache/samba
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- \"http://127.0.0.1:$${API_PORT:-8787}/health\" || exit 1"]
       interval: 30s
@@ -19,4 +40,5 @@ services:
       retries: 3
 
 volumes:
+  postgres-data:
   samba-cache:

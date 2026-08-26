@@ -119,3 +119,27 @@ OPENAI_HTTP_TIMEOUT=30s
 API_PORT=8787
 SAMBA_HTTP_TIMEOUT=90s
 ```
+
+## Docker Postgres
+
+The Docker deployment includes a `db` service for self-hosted Postgres:
+
+```bash
+make db-up
+make migrate-up
+```
+
+`make migrate-up` applies the SQL files in `db/migrations` and records applied
+versions in `public.schema_migrations`. The migrations were copied from the
+KamadevaPrive Supabase project. `db/bootstrap/0000_supabase_compat.sql` creates
+the minimum `auth`, `extensions`, and Supabase role compatibility objects needed
+for those migrations on ordinary Postgres.
+
+Rollback is destructive because the source Supabase migrations do not include
+individual down migrations:
+
+```bash
+make migrate-down CONFIRM=drop
+```
+
+Set a strong `POSTGRES_PASSWORD` in production `.env`.
