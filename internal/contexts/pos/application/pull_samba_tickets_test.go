@@ -1,6 +1,8 @@
 package application
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	posdomain "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/pos/domain"
@@ -73,5 +75,97 @@ func TestPullSambaTicketsRequestValidation(t *testing.T) {
 
 	if err := req.Validate(); err == nil {
 		t.Fatalf("expected validation error")
+	}
+}
+
+func TestPullTicketsSkipsExistingTicketNumbers(t *testing.T) {
+	repo := &fakeTicketRepository{
+		existing: map[string]bool{"71357": true},
+	}
+	service := NewSambaPullService(fakeSambaTicketSource{
+		tickets: []posdomain.SambaSourceTicket{
+			sourceTicket("71357"),
+			sourceTicket("71358"),
+		},
+	}, repo)
+
+	result, err := service.PullTickets(context.Background(), PullSambaTicketsRequest{
+		VenueID: "11111111-1111-4111-8111-111111111111",
+		From:    "2026-07-05",
+		To:      "2026-07-05",
+	})
+	if err != nil {
+		t.Fatalf("PullTickets error = %v", err)
+	}
+	if result.Source != 2 {
+		t.Fatalf("source count = %d", result.Source)
+	}
+	if result.SkippedExisting != 1 {
+		t.Fatalf("skipped existing = %d", result.SkippedExisting)
+	}
+	if result.Imported != 1 {
+		t.Fatalf("imported = %d", result.Imported)
+	}
+	if len(repo.saved) != 1 || repo.saved[0].TicketNo != "71358" {
+		t.Fatalf("saved tickets = %#v", repo.saved)
+	}
+}
+
+type fakeTicketRepository struct {
+	existing map[string]bool
+	saved    []posdomain.SambaTicket
+}
+
+func (r *fakeTicketRepository) SaveSambaTicket(ctx context.Context, ticket posdomain.SambaTicket) (string, error) {
+	r.saved = append(r.saved, ticket)
+	return "ticket-id-" + ticket.TicketNo, nil
+}
+
+func (r *fakeTicketRepository) ExistingSambaTicketNumbers(ctx context.Context, venueID string, ticketNumbers []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, number := range ticketNumbers {
+		if r.existing[number] {
+			out[number] = true
+		}
+	}
+	return out, nil
+}
+
+type fakeSambaTicketSource struct {
+	tickets []posdomain.SambaSourceTicket
+}
+
+func (s fakeSambaTicketSource) FetchTickets(ctx context.Context, from, to string) (posdomain.SambaTicketRange, error) {
+	return posdomain.SambaTicketRange{
+		From:    from,
+		To:      to,
+		Count:   len(s.tickets),
+		Tickets: s.tickets,
+	}, nil
+}
+
+func (s fakeSambaTicketSource) FetchCleanTickets(ctx context.Context, query posdomain.SambaCleanTicketQuery) (json.RawMessage, error) {
+	return nil, nil
+}
+
+func (s fakeSambaTicketSource) FetchCleanTicket(ctx context.Context, ticketNumber string) (json.RawMessage, error) {
+	return nil, nil
+}
+
+func (s fakeSambaTicketSource) Health(ctx context.Context) (posdomain.SambaSourceHealth, error) {
+	return posdomain.SambaSourceHealth{OK: true}, nil
+}
+
+func sourceTicket(ticketNumber string) posdomain.SambaSourceTicket {
+	return posdomain.SambaSourceTicket{
+		ID:                336737,
+		TicketNumber:      ticketNumber,
+		Date:              "2026-07-05T00:56:23.503Z",
+		LastPaymentDate:   "2026-07-05T00:56:23.503Z",
+		TotalAmount:       9500,
+		TotalAmountPreTax: 9500,
+		Orders: []posdomain.SambaSourceOrder{
+			{MenuItemName: "Voss Sparkling Water", PortionName: "Normal", Price: 9500, Quantity: 1, CalculatePrice: true},
+		},
 	}
 }

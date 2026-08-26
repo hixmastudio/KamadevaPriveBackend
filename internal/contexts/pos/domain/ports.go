@@ -7,6 +7,7 @@ import (
 
 type TicketRepository interface {
 	SaveSambaTicket(ctx context.Context, ticket SambaTicket) (string, error)
+	ExistingSambaTicketNumbers(ctx context.Context, venueID string, ticketNumbers []string) (map[string]bool, error)
 }
 
 type SambaTicketSource interface {

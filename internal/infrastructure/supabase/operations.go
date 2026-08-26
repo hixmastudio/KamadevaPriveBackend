@@ -58,6 +58,32 @@ func (o *Operations) SaveSambaTicket(ctx context.Context, ticket posdomain.Samba
 	return ticketID, nil
 }
 
+func (o *Operations) ExistingSambaTicketNumbers(ctx context.Context, venueID string, ticketNumbers []string) (map[string]bool, error) {
+	existing := map[string]bool{}
+	unique := uniqueNonEmpty(ticketNumbers)
+	for start := 0; start < len(unique); start += 200 {
+		end := start + 200
+		if end > len(unique) {
+			end = len(unique)
+		}
+
+		var rows []struct {
+			TicketNo string `json:"ticket_no"`
+		}
+		if err := o.selectRows(ctx, "/pos_tickets", url.Values{
+			"select":    {"ticket_no"},
+			"venue_id":  {"eq." + venueID},
+			"ticket_no": {"in.(" + postgrestTextList(unique[start:end]) + ")"},
+		}, &rows); err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			existing[strings.TrimSpace(row.TicketNo)] = true
+		}
+	}
+	return existing, nil
+}
+
 func (o *Operations) RunTierDecaySweep(ctx context.Context) error {
 	return o.rpc(ctx, "sweep_tier_decay", map[string]any{}, nil)
 }
@@ -362,4 +388,28 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := map[string]bool{}
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		unique = append(unique, value)
+	}
+	return unique
+}
+
+func postgrestTextList(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ReplaceAll(value, `\`, `\\`)
+		value = strings.ReplaceAll(value, `"`, `\"`)
+		quoted = append(quoted, `"`+value+`"`)
+	}
+	return strings.Join(quoted, ",")
 }

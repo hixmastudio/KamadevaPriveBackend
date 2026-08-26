@@ -29,15 +29,16 @@ type PullSambaTicketsRequest struct {
 }
 
 type PullSambaTicketsResult struct {
-	From      string                       `json:"from"`
-	To        string                       `json:"to"`
-	Source    int                          `json:"source_count"`
-	Imported  int                          `json:"imported_count"`
-	Failed    int                          `json:"failed_count"`
-	Tickets   []ImportedSambaTicket        `json:"tickets"`
-	Failures  []FailedSambaTicketImport    `json:"failures,omitempty"`
-	Unmatched int                          `json:"unmatched_customer_count"`
-	Health    *posdomain.SambaSourceHealth `json:"health,omitempty"`
+	From            string                       `json:"from"`
+	To              string                       `json:"to"`
+	Source          int                          `json:"source_count"`
+	Imported        int                          `json:"imported_count"`
+	SkippedExisting int                          `json:"skipped_existing_count"`
+	Failed          int                          `json:"failed_count"`
+	Tickets         []ImportedSambaTicket        `json:"tickets"`
+	Failures        []FailedSambaTicketImport    `json:"failures,omitempty"`
+	Unmatched       int                          `json:"unmatched_customer_count"`
+	Health          *posdomain.SambaSourceHealth `json:"health,omitempty"`
 }
 
 type ImportedSambaTicket struct {
@@ -124,7 +125,25 @@ func (s SambaPullService) PullTickets(ctx context.Context, req PullSambaTicketsR
 		Health: &health,
 	}
 
+	existing, err := s.existingTicketNumbers(ctx, req.VenueID, sourceRange.Tickets)
+	if err != nil {
+		s.logger.Error("samba_pull_existing_ticket_lookup_failed",
+			"venue_id", req.VenueID,
+			"from", req.From,
+			"to", req.To,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"error", err,
+		)
+		return PullSambaTicketsResult{}, err
+	}
+
 	for _, sourceTicket := range sourceRange.Tickets {
+		ticketNumber := strings.TrimSpace(sourceTicket.TicketNumber)
+		if existing[ticketNumber] {
+			result.SkippedExisting++
+			continue
+		}
+
 		ticket, matchedCustomer := mapSourceTicket(req.VenueID, sourceTicket)
 		if !matchedCustomer {
 			result.Unmatched++
@@ -164,11 +183,20 @@ func (s SambaPullService) PullTickets(ctx context.Context, req PullSambaTicketsR
 		"to", result.To,
 		"source_count", result.Source,
 		"imported_count", result.Imported,
+		"skipped_existing_count", result.SkippedExisting,
 		"failed_count", result.Failed,
 		"unmatched_customer_count", result.Unmatched,
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
 	return result, nil
+}
+
+func (s SambaPullService) existingTicketNumbers(ctx context.Context, venueID string, sourceTickets []posdomain.SambaSourceTicket) (map[string]bool, error) {
+	numbers := make([]string, 0, len(sourceTickets))
+	for _, ticket := range sourceTickets {
+		numbers = append(numbers, ticket.TicketNumber)
+	}
+	return s.tickets.ExistingSambaTicketNumbers(ctx, venueID, numbers)
 }
 
 func (s SambaPullService) saveSambaTicketWithRetry(ctx context.Context, ticket posdomain.SambaTicket, sourceTicket posdomain.SambaSourceTicket) (string, error) {
