@@ -1,4 +1,4 @@
-COMPOSE := docker compose -f devops/docker-compose.yml
+COMPOSE := docker compose --env-file .env -f devops/docker-compose.yml
 DEV_COMPOSE := $(COMPOSE) -f devops/docker-compose.dev.yml
 PROD_COMPOSE := $(COMPOSE) -f devops/docker-compose.prod.yml
 
