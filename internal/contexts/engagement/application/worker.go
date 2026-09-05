@@ -104,25 +104,28 @@ func (w *Worker) sendBookingConfirmation(ctx context.Context, event engagementdo
 		return fmt.Errorf("booking %s has no WhatsApp destination", bookingID)
 	}
 	message := bookingConfirmationMessage(*booking)
-	if w.bookingConfirmationTemplate != "" {
-		if err := w.messages.SendTemplate(ctx, to, w.bookingConfirmationTemplate, bookingConfirmationTemplateParams(*booking)); err != nil {
-			return err
-		}
-	} else {
-		if err := w.messages.SendText(ctx, to, message); err != nil {
-			return err
-		}
+	template := firstNonEmpty(w.bookingConfirmationTemplate, "booking_received")
+	result, err := w.messages.SendTemplate(ctx, to, template, bookingConfirmationTemplateParams(*booking))
+	if err != nil {
+		w.logger.Error("whatsapp_booking_confirmation_failed", "booking_id", booking.ID, "to", to, "error", err)
+		return nil
 	}
+	messageID := ""
+	if result != nil {
+		messageID = result.MessageID
+	}
+	w.logger.Info("whatsapp_booking_confirmation_sent", "booking_id", booking.ID, "to", to, "message_id", messageID)
 	conversation, err := w.repo.FindOrCreateConversation(ctx, booking.CustomerID, booking.ID, engagementdomain.ChannelWhatsApp)
 	if err != nil {
 		return err
 	}
 	_, err = w.repo.SaveMessage(ctx, engagementdomain.ConversationMessage{
-		ConversationID: conversation.ID,
-		Direction:      engagementdomain.DirectionOutbound,
-		SenderType:     engagementdomain.SenderSystem,
-		Body:           message,
-		CreatedAt:      time.Now(),
+		ConversationID:    conversation.ID,
+		ExternalMessageID: messageID,
+		Direction:         engagementdomain.DirectionOutbound,
+		SenderType:        engagementdomain.SenderSystem,
+		Body:              message,
+		CreatedAt:         time.Now(),
 	})
 	return err
 }
@@ -132,7 +135,7 @@ func (w *Worker) processInbound(ctx context.Context, event engagementdomain.Outb
 	if err := json.Unmarshal(event.Payload, &inbound); err != nil {
 		return err
 	}
-	customer, err := w.repo.GetCustomerByPhone(ctx, NormalizePhone(inbound.From))
+	customer, err := w.repo.GetCustomerByPhone(ctx, dbPhone(inbound.From))
 	if err != nil {
 		return err
 	}
@@ -320,15 +323,21 @@ func isNegative(body string) bool {
 }
 
 func (w *Worker) reply(ctx context.Context, conversation *engagementdomain.Conversation, to, body, sender string) error {
-	if err := w.messages.SendText(ctx, to, body); err != nil {
+	result, err := w.messages.SendText(ctx, to, body)
+	if err != nil {
 		return err
 	}
-	_, err := w.repo.SaveMessage(ctx, engagementdomain.ConversationMessage{
-		ConversationID: conversation.ID,
-		Direction:      engagementdomain.DirectionOutbound,
-		SenderType:     sender,
-		Body:           body,
-		CreatedAt:      time.Now(),
+	messageID := ""
+	if result != nil {
+		messageID = result.MessageID
+	}
+	_, err = w.repo.SaveMessage(ctx, engagementdomain.ConversationMessage{
+		ConversationID:    conversation.ID,
+		ExternalMessageID: messageID,
+		Direction:         engagementdomain.DirectionOutbound,
+		SenderType:        sender,
+		Body:              body,
+		CreatedAt:         time.Now(),
 	})
 	return err
 }
@@ -338,11 +347,13 @@ func bookingConfirmationMessage(booking engagementdomain.BookingSummary) string 
 	if name == "" {
 		name = "Booking"
 	}
-	return fmt.Sprintf("Hello,\n\nYour booking has been confirmed.\n\nBooking ID: %s\nService: %s\nDate: %s\nTime: %s\n\nYou can reply to this message if you need help with your booking.",
-		booking.ID,
+	return fmt.Sprintf("Hello %s,\n\nWe've received your booking.\n\nVenue: %s\nDate: %s\nTime: %s\nGuests: %s\n\nBooking reference: %s\n\nWe'll notify you once your booking has been confirmed.",
+		bookingCustomerName(booking),
 		name,
 		booking.StartsAt.Format("2 January 2006"),
 		booking.StartsAt.Format("3:04 PM"),
+		bookingGuests(booking),
+		booking.ID,
 	)
 }
 
@@ -352,11 +363,35 @@ func bookingConfirmationTemplateParams(booking engagementdomain.BookingSummary) 
 		service = "Booking"
 	}
 	return map[string]string{
-		"booking_id": booking.ID,
-		"service":    service,
-		"date":       booking.StartsAt.Format("2 January 2006"),
-		"time":       booking.StartsAt.Format("3:04 PM"),
+		"customer_name":     bookingCustomerName(booking),
+		"venue":             service,
+		"date":              booking.StartsAt.Format("2 January 2006"),
+		"time":              booking.StartsAt.Format("3:04 PM"),
+		"guests":            bookingGuests(booking),
+		"booking_reference": booking.ID,
 	}
+}
+
+func bookingCustomerName(booking engagementdomain.BookingSummary) string {
+	if name := strings.TrimSpace(booking.CustomerName); name != "" {
+		return name
+	}
+	return "there"
+}
+
+func bookingGuests(booking engagementdomain.BookingSummary) string {
+	if booking.PartySize > 0 {
+		return fmt.Sprintf("%d", booking.PartySize)
+	}
+	return "Not specified"
+}
+
+func dbPhone(raw string) string {
+	normalized := NormalizePhone(raw)
+	if normalized == "" {
+		return ""
+	}
+	return "+" + normalized
 }
 
 func firstNonEmpty(values ...string) string {

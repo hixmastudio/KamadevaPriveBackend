@@ -53,13 +53,15 @@ type ConversationMessage struct {
 }
 
 type BookingSummary struct {
-	ID          string    `json:"id"`
-	CustomerID  string    `json:"customer_id"`
-	ServiceID   string    `json:"service_id,omitempty"`
-	ServiceName string    `json:"service_name,omitempty"`
-	Status      string    `json:"status"`
-	StartsAt    time.Time `json:"starts_at"`
-	EndsAt      time.Time `json:"ends_at,omitempty"`
+	ID           string    `json:"id"`
+	CustomerID   string    `json:"customer_id"`
+	CustomerName string    `json:"customer_name,omitempty"`
+	ServiceID    string    `json:"service_id,omitempty"`
+	ServiceName  string    `json:"service_name,omitempty"`
+	Status       string    `json:"status"`
+	StartsAt     time.Time `json:"starts_at"`
+	EndsAt       time.Time `json:"ends_at,omitempty"`
+	PartySize    int       `json:"party_size,omitempty"`
 }
 
 type CustomerSummary struct {
@@ -106,6 +108,10 @@ type WhatsAppStatus struct {
 	ErrorText string
 }
 
+type MessageSendResult struct {
+	MessageID string
+}
+
 type ConversationInput struct {
 	Conversation  Conversation
 	Customer      CustomerSummary
@@ -136,8 +142,8 @@ type AIToolCall struct {
 }
 
 type MessagingClient interface {
-	SendText(ctx context.Context, to string, message string) error
-	SendTemplate(ctx context.Context, to string, template string, params map[string]string) error
+	SendText(ctx context.Context, to string, message string) (*MessageSendResult, error)
+	SendTemplate(ctx context.Context, to string, template string, params map[string]string) (*MessageSendResult, error)
 }
 
 type AIClient interface {

@@ -40,6 +40,7 @@ type Config struct {
 	BoomBoomRoomOrchestratorOnStart     bool
 	WhatsAppAccessToken                 string
 	WhatsAppPhoneNumberID               string
+	WhatsAppBusinessAccountID           string
 	WhatsAppVerifyToken                 string
 	WhatsAppAppSecret                   string
 	WhatsAppAPIVersion                  string
@@ -91,10 +92,11 @@ func Load() (Config, error) {
 		BoomBoomRoomOrchestratorOnStart:     boolFromEnv("BOOM_BOOM_ROOM_ORCHESTRATOR_RUN_ON_START", false),
 		WhatsAppAccessToken:                 os.Getenv("WHATSAPP_ACCESS_TOKEN"),
 		WhatsAppPhoneNumberID:               os.Getenv("WHATSAPP_PHONE_NUMBER_ID"),
-		WhatsAppVerifyToken:                 os.Getenv("WHATSAPP_VERIFY_TOKEN"),
+		WhatsAppBusinessAccountID:           os.Getenv("WHATSAPP_BUSINESS_ACCOUNT_ID"),
+		WhatsAppVerifyToken:                 firstEnv("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "WHATSAPP_VERIFY_TOKEN"),
 		WhatsAppAppSecret:                   os.Getenv("WHATSAPP_APP_SECRET"),
-		WhatsAppAPIVersion:                  valueOrDefault(os.Getenv("WHATSAPP_API_VERSION"), "v20.0"),
-		WhatsAppBookingConfirmationTemplate: os.Getenv("WHATSAPP_BOOKING_CONFIRMATION_TEMPLATE"),
+		WhatsAppAPIVersion:                  valueOrDefault(os.Getenv("WHATSAPP_API_VERSION"), "v25.0"),
+		WhatsAppBookingConfirmationTemplate: valueOrDefault(firstEnv("WHATSAPP_BOOKING_TEMPLATE", "WHATSAPP_BOOKING_CONFIRMATION_TEMPLATE"), "booking_received"),
 		WhatsAppWorkerEnabled:               boolFromEnv("WHATSAPP_WORKER_ENABLED", false),
 		WhatsAppWorkerInterval:              durationFromEnv("WHATSAPP_WORKER_INTERVAL", 15*time.Second),
 		AIProvider:                          valueOrDefault(os.Getenv("AI_PROVIDER"), "disabled"),
@@ -194,7 +196,7 @@ func Load() (Config, error) {
 		}
 	}
 	if cfg.WhatsAppVerifyToken != "" && len(cfg.WhatsAppVerifyToken) < 16 {
-		return Config{}, errors.New("WHATSAPP_VERIFY_TOKEN must be at least 16 characters when set")
+		return Config{}, errors.New("WHATSAPP_WEBHOOK_VERIFY_TOKEN must be at least 16 characters when set")
 	}
 	if cfg.WhatsAppAppSecret != "" && len(cfg.WhatsAppAppSecret) < 16 {
 		return Config{}, errors.New("WHATSAPP_APP_SECRET must be at least 16 characters when set")
@@ -259,6 +261,15 @@ func valueOrDefault(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func int64FromEnv(key string, fallback int64) int64 {

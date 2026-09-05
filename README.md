@@ -52,17 +52,17 @@ X-KP-Signature: sha256=<hex hmac sha256 of raw JSON body>
 
 Meta WhatsApp webhook callbacks use the official verification flow:
 
-- `GET /webhooks/whatsapp` validates `WHATSAPP_VERIFY_TOKEN`
+- `GET /webhooks/whatsapp` validates `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
 - `POST /webhooks/whatsapp` validates `X-Hub-Signature-256` with
   `WHATSAPP_APP_SECRET` when configured, deduplicates by WhatsApp message ID,
   enqueues inbound messages, and returns quickly
 
 Booking confirmations and AI replies are processed by the engagement worker when
 `WHATSAPP_WORKER_ENABLED=true`. Supabase remains the booking source of truth;
-apply/adapt `devops/supabase-whatsapp-booking-assistant.sql` and map the listed
-booking/customer RPCs to the production reservation schema.
-Set `WHATSAPP_BOOKING_CONFIRMATION_TEMPLATE` to an approved Meta template name
-when confirmations may be sent outside the customer service window.
+apply `db/migrations/0085_whatsapp_booking_confirmations.sql` to create the
+reservation outbox trigger and engagement RPCs. Booking-created notifications
+use the approved Meta template named by `WHATSAPP_BOOKING_TEMPLATE`, defaulting
+to `booking_received`.
 
 ## Docs
 
@@ -106,10 +106,11 @@ BOOM_BOOM_ROOM_ORCHESTRATOR_LOOKBACK_DAYS=1
 BOOM_BOOM_ROOM_ORCHESTRATOR_RUN_ON_START=false
 WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
-WHATSAPP_VERIFY_TOKEN=
+WHATSAPP_BUSINESS_ACCOUNT_ID=
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=
 WHATSAPP_APP_SECRET=
-WHATSAPP_API_VERSION=v20.0
-WHATSAPP_BOOKING_CONFIRMATION_TEMPLATE=
+WHATSAPP_API_VERSION=v25.0
+WHATSAPP_BOOKING_TEMPLATE=booking_received
 WHATSAPP_WORKER_ENABLED=false
 WHATSAPP_WORKER_INTERVAL=15s
 AI_PROVIDER=disabled

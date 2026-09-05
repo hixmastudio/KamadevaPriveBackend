@@ -65,6 +65,11 @@ func (s WebhookIntakeService) AcceptWhatsAppWebhook(ctx context.Context, headers
 		for _, change := range entry.Changes {
 			for _, status := range change.Value.Statuses {
 				statuses++
+				s.logger.Info("whatsapp_status_event_received",
+					"message_id", status.ID,
+					"status", status.Status,
+					"error_code", firstStatusErrorCode(status.Errors),
+				)
 				_ = s.repo.UpdateWhatsAppStatus(ctx, engagementdomain.WhatsAppStatus{
 					MessageID: status.ID,
 					Status:    strings.ToUpper(status.Status),
@@ -102,6 +107,7 @@ func (s WebhookIntakeService) AcceptWhatsAppWebhook(ctx context.Context, headers
 				}); err != nil {
 					return nil, err
 				}
+				s.logger.Info("whatsapp_message_event_enqueued", "message_id", msg.ID, "from", NormalizePhone(msg.From), "type", msg.Type)
 				accepted++
 			}
 		}
@@ -130,7 +136,13 @@ func NormalizePhone(raw string) string {
 	if strings.HasPrefix(value, "00") {
 		value = value[2:]
 	}
-	return "+" + value
+	if len(value) == 11 && strings.HasPrefix(value, "0") {
+		return "234" + value[1:]
+	}
+	if len(value) == 13 && strings.HasPrefix(value, "234") {
+		return value
+	}
+	return value
 }
 
 func validMetaSignature(headers http.Header, body []byte, secret string) bool {

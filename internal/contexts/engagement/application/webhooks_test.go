@@ -27,6 +27,11 @@ func TestWhatsAppWebhookVerification(t *testing.T) {
 		t.Fatalf("expected challenge abc123, got %q", challenge)
 	}
 
+}
+
+func TestInvalidWhatsAppWebhookVerificationToken(t *testing.T) {
+	svc := NewWebhookIntakeService(&fakeRepo{}, "verify-token-123456", "", nil)
+
 	if _, err := svc.VerifyWhatsAppWebhook(map[string]string{
 		"hub.mode":         "subscribe",
 		"hub.verify_token": "wrong",
@@ -65,7 +70,7 @@ func TestAcceptWhatsAppWebhookEnqueuesIncomingMessageOnce(t *testing.T) {
 	if len(repo.inbound) != 1 {
 		t.Fatalf("expected one queued inbound message, got %d", len(repo.inbound))
 	}
-	if repo.inbound[0].From != "+2348012345678" {
+	if repo.inbound[0].From != "2348012345678" {
 		t.Fatalf("expected normalized phone, got %q", repo.inbound[0].From)
 	}
 

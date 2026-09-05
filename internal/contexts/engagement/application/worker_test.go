@@ -13,10 +13,12 @@ import (
 func TestBookingConfirmationSendsMessageAndPersistsOutbound(t *testing.T) {
 	repo := &workerRepo{
 		booking: engagementdomain.BookingSummary{
-			ID:          "BK-92821",
-			CustomerID:  "cust_1",
-			ServiceName: "Haircut",
-			StartsAt:    time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC),
+			ID:           "BK-92821",
+			CustomerID:   "cust_1",
+			CustomerName: "Ada",
+			ServiceName:  "Haircut",
+			StartsAt:     time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC),
+			PartySize:    3,
 		},
 	}
 	messages := &fakeMessenger{}
@@ -40,7 +42,7 @@ func TestBookingConfirmationSendsMessageAndPersistsOutbound(t *testing.T) {
 	}
 }
 
-func TestWhatsAppFailureDoesNotMarkBookingEventSuccessful(t *testing.T) {
+func TestBookingRemainsSuccessfulWhenWhatsAppSendingFails(t *testing.T) {
 	repo := &workerRepo{booking: engagementdomain.BookingSummary{ID: "BK-1", CustomerID: "cust_1", StartsAt: time.Now()}}
 	worker := NewWorker(repo, &fakeMessenger{err: errors.New("meta unavailable")}, nil, time.Second, nil)
 	payload, _ := json.Marshal(map[string]string{"booking_id": "BK-1", "phone": "+2348012345678"})
@@ -51,11 +53,52 @@ func TestWhatsAppFailureDoesNotMarkBookingEventSuccessful(t *testing.T) {
 		AggregateID: "BK-1",
 		Payload:     payload,
 	})
-	if err == nil {
-		t.Fatalf("expected WhatsApp failure to bubble to outbox retry")
+	if err != nil {
+		t.Fatalf("expected WhatsApp failure not to fail booking outbox event: %v", err)
 	}
 	if len(repo.messages) != 0 {
 		t.Fatalf("should not persist outbound success when send fails")
+	}
+}
+
+func TestNormalizePhone(t *testing.T) {
+	tests := map[string]string{
+		"08012345678":     "2348012345678",
+		"+2348012345678":  "2348012345678",
+		"2348012345678":   "2348012345678",
+		"+14155550100":    "14155550100",
+		"14155550100":     "14155550100",
+		"004414812345678": "4414812345678",
+		" 0801 234 5678 ": "2348012345678",
+	}
+	for input, want := range tests {
+		if got := NormalizePhone(input); got != want {
+			t.Fatalf("NormalizePhone(%q): expected %q, got %q", input, want, got)
+		}
+	}
+}
+
+func TestBookingConfirmationTemplateParams(t *testing.T) {
+	booking := engagementdomain.BookingSummary{
+		ID:           "BK-92821",
+		CustomerName: "Ada",
+		ServiceName:  "Oso Lounge",
+		StartsAt:     time.Date(2026, 9, 5, 20, 30, 0, 0, time.UTC),
+		PartySize:    5,
+	}
+	got := bookingConfirmationTemplateParams(booking)
+	want := map[string]string{
+		"customer_name":     "Ada",
+		"venue":             "Oso Lounge",
+		"date":              "5 September 2026",
+		"time":              "8:30 PM",
+		"guests":            "5",
+		"booking_reference": "BK-92821",
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("template param %s: expected %q, got %q", key, value, got[key])
+		}
 	}
 }
 
@@ -150,20 +193,20 @@ type fakeMessenger struct {
 	err  error
 }
 
-func (m *fakeMessenger) SendText(_ context.Context, _ string, message string) error {
+func (m *fakeMessenger) SendText(_ context.Context, _ string, message string) (*engagementdomain.MessageSendResult, error) {
 	if m.err != nil {
-		return m.err
+		return nil, m.err
 	}
 	m.sent = append(m.sent, message)
-	return nil
+	return &engagementdomain.MessageSendResult{MessageID: "wamid.fake"}, nil
 }
 
-func (m *fakeMessenger) SendTemplate(context.Context, string, string, map[string]string) error {
+func (m *fakeMessenger) SendTemplate(context.Context, string, string, map[string]string) (*engagementdomain.MessageSendResult, error) {
 	if m.err != nil {
-		return m.err
+		return nil, m.err
 	}
 	m.sent = append(m.sent, "template")
-	return nil
+	return &engagementdomain.MessageSendResult{MessageID: "wamid.template"}, nil
 }
 
 type fakeAI struct {
