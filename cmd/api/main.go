@@ -103,6 +103,7 @@ func main() {
 			cfg.WhatsAppWorkerInterval,
 			slog.Default(),
 			engagementapp.WithBookingConfirmationTemplate(cfg.WhatsAppBookingConfirmationTemplate),
+			engagementapp.WithBookingHeaderImageURL(cfg.WhatsAppBookingHeaderImageURL),
 		).Start(appCtx)
 	}
 	orchestrator.Start(appCtx)

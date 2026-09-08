@@ -18,6 +18,7 @@ type Worker struct {
 	interval                    time.Duration
 	logger                      *slog.Logger
 	bookingConfirmationTemplate string
+	bookingHeaderImageURL       string
 }
 
 type WorkerOption func(*Worker)
@@ -25,6 +26,12 @@ type WorkerOption func(*Worker)
 func WithBookingConfirmationTemplate(template string) WorkerOption {
 	return func(w *Worker) {
 		w.bookingConfirmationTemplate = strings.TrimSpace(template)
+	}
+}
+
+func WithBookingHeaderImageURL(url string) WorkerOption {
+	return func(w *Worker) {
+		w.bookingHeaderImageURL = strings.TrimSpace(url)
 	}
 }
 
@@ -107,7 +114,7 @@ func (w *Worker) sendBookingConfirmation(ctx context.Context, event engagementdo
 	}
 	message := bookingConfirmationMessage(*booking)
 	template := firstNonEmpty(w.bookingConfirmationTemplate, "booking_received")
-	result, err := w.messages.SendTemplate(ctx, to, template, bookingConfirmationTemplateParams(*booking))
+	result, err := w.messages.SendTemplate(ctx, to, template, bookingConfirmationTemplateParams(*booking, w.bookingHeaderImageURL))
 	if err != nil {
 		w.logger.Error("whatsapp_booking_confirmation_failed", "booking_id", booking.ID, "to", to, "error", err)
 		return nil
@@ -406,29 +413,35 @@ func bookingConfirmationMessage(booking engagementdomain.BookingSummary) string 
 	if name == "" {
 		name = "Booking"
 	}
-	return fmt.Sprintf("Hello %s,\n\nWe've received your booking.\n\nVenue: %s\nDate: %s\nTime: %s\nGuests: %s\n\nBooking reference: %s\n\nWe'll notify you once your booking has been confirmed.",
+	return fmt.Sprintf("Hello %s,\n\nThank you for choosing Kamadeva Privé. Your booking has been received.\n\n📍 Venue: %s\n📅 Date: %s\n🕗 Time: %s\n👥 Guests: %s\n\n📌 Address:\n%s\n\n🔖 Booking Reference:\n%s\n\nWe look forward to welcoming you.\nThank you for choosing Kamadeva Privé. 🥂",
 		bookingCustomerName(booking),
 		name,
 		booking.StartsAt.Format("2 January 2006"),
 		booking.StartsAt.Format("3:04 PM"),
 		bookingGuests(booking),
+		bookingAddress(booking),
 		booking.ID,
 	)
 }
 
-func bookingConfirmationTemplateParams(booking engagementdomain.BookingSummary) map[string]string {
+func bookingConfirmationTemplateParams(booking engagementdomain.BookingSummary, headerImageURL string) map[string]string {
 	service := strings.TrimSpace(booking.ServiceName)
 	if service == "" {
 		service = "Booking"
 	}
-	return map[string]string{
+	params := map[string]string{
 		"customer_name":     bookingCustomerName(booking),
 		"venue":             service,
 		"date":              booking.StartsAt.Format("2 January 2006"),
 		"time":              booking.StartsAt.Format("3:04 PM"),
 		"guests":            bookingGuests(booking),
+		"address":           bookingAddress(booking),
 		"booking_reference": booking.ID,
 	}
+	if headerImageURL = strings.TrimSpace(headerImageURL); headerImageURL != "" {
+		params["header_image_url"] = headerImageURL
+	}
+	return params
 }
 
 func bookingCustomerName(booking engagementdomain.BookingSummary) string {
@@ -443,6 +456,13 @@ func bookingGuests(booking engagementdomain.BookingSummary) string {
 		return fmt.Sprintf("%d", booking.PartySize)
 	}
 	return "Not specified"
+}
+
+func bookingAddress(booking engagementdomain.BookingSummary) string {
+	if address := strings.TrimSpace(booking.ServiceAddress); address != "" {
+		return address
+	}
+	return "Address to be confirmed"
 }
 
 func dbPhone(raw string) string {

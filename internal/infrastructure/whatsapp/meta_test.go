@@ -17,10 +17,11 @@ func TestOrderedTemplateParamKeysUsesBookingConfirmationOrder(t *testing.T) {
 		"booking_reference": "BK-92821",
 		"customer_name":     "Ada",
 		"guests":            "5",
+		"address":           "141 Adetokunbo Ademola Crescent, Abuja",
 	}
 
 	got := orderedTemplateParamKeys(params)
-	want := []string{"customer_name", "venue", "date", "time", "guests", "booking_reference"}
+	want := []string{"customer_name", "venue", "date", "time", "guests", "address", "booking_reference"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
@@ -28,6 +29,7 @@ func TestOrderedTemplateParamKeysUsesBookingConfirmationOrder(t *testing.T) {
 
 func TestOrderedTemplateParamKeysSortsUnknownKeysAfterKnownKeys(t *testing.T) {
 	params := map[string]string{
+		"header_image_url":  "https://kamadevaprive.com/apple-touch-icon.png",
 		"zeta":              "z",
 		"booking_reference": "BK-92821",
 		"alpha":             "a",
@@ -47,7 +49,9 @@ func TestBuildTemplateMessagePayload(t *testing.T) {
 		"date":              "5 September 2026",
 		"time":              "8:30 PM",
 		"guests":            "5",
+		"address":           "141 Adetokunbo Ademola Crescent, Abuja",
 		"booking_reference": "BK-92821",
+		"header_image_url":  "https://kamadevaprive.com/apple-touch-icon.png",
 	})
 
 	if payload["to"] != "2348012345678" {
@@ -56,6 +60,20 @@ func TestBuildTemplateMessagePayload(t *testing.T) {
 	template := payload["template"].(map[string]any)
 	if template["name"] != "booking_received" {
 		t.Fatalf("expected booking_received template, got %#v", template["name"])
+	}
+	components := template["components"].([]map[string]any)
+	if len(components) != 2 {
+		t.Fatalf("expected header and body components, got %#v", components)
+	}
+	if components[0]["type"] != "header" {
+		t.Fatalf("expected first component to be header, got %#v", components[0])
+	}
+	if components[1]["type"] != "body" {
+		t.Fatalf("expected second component to be body, got %#v", components[1])
+	}
+	bodyParams := components[1]["parameters"].([]map[string]string)
+	if len(bodyParams) != 7 {
+		t.Fatalf("expected seven body params, got %#v", bodyParams)
 	}
 }
 

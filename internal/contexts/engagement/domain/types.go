@@ -76,15 +76,16 @@ type ConversationOverview struct {
 }
 
 type BookingSummary struct {
-	ID           string    `json:"id"`
-	CustomerID   string    `json:"customer_id"`
-	CustomerName string    `json:"customer_name,omitempty"`
-	ServiceID    string    `json:"service_id,omitempty"`
-	ServiceName  string    `json:"service_name,omitempty"`
-	Status       string    `json:"status"`
-	StartsAt     time.Time `json:"starts_at"`
-	EndsAt       time.Time `json:"ends_at,omitempty"`
-	PartySize    int       `json:"party_size,omitempty"`
+	ID             string    `json:"id"`
+	CustomerID     string    `json:"customer_id"`
+	CustomerName   string    `json:"customer_name,omitempty"`
+	ServiceID      string    `json:"service_id,omitempty"`
+	ServiceName    string    `json:"service_name,omitempty"`
+	ServiceAddress string    `json:"service_address,omitempty"`
+	Status         string    `json:"status"`
+	StartsAt       time.Time `json:"starts_at"`
+	EndsAt         time.Time `json:"ends_at,omitempty"`
+	PartySize      int       `json:"party_size,omitempty"`
 }
 
 type CustomerSummary struct {

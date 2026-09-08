@@ -80,25 +80,41 @@ func TestNormalizePhone(t *testing.T) {
 
 func TestBookingConfirmationTemplateParams(t *testing.T) {
 	booking := engagementdomain.BookingSummary{
-		ID:           "BK-92821",
-		CustomerName: "Ada",
-		ServiceName:  "Oso Lounge",
-		StartsAt:     time.Date(2026, 9, 5, 20, 30, 0, 0, time.UTC),
-		PartySize:    5,
+		ID:             "BK-92821",
+		CustomerName:   "Ada",
+		ServiceName:    "Oso Lounge",
+		ServiceAddress: "141 Adetokunbo Ademola Crescent, Abuja",
+		StartsAt:       time.Date(2026, 9, 5, 20, 30, 0, 0, time.UTC),
+		PartySize:      5,
 	}
-	got := bookingConfirmationTemplateParams(booking)
+	got := bookingConfirmationTemplateParams(booking, "")
 	want := map[string]string{
 		"customer_name":     "Ada",
 		"venue":             "Oso Lounge",
 		"date":              "5 September 2026",
 		"time":              "8:30 PM",
 		"guests":            "5",
+		"address":           "141 Adetokunbo Ademola Crescent, Abuja",
 		"booking_reference": "BK-92821",
 	}
 	for key, value := range want {
 		if got[key] != value {
 			t.Fatalf("template param %s: expected %q, got %q", key, value, got[key])
 		}
+	}
+}
+
+func TestBookingConfirmationTemplateParamsIncludesHeaderImageWhenConfigured(t *testing.T) {
+	booking := engagementdomain.BookingSummary{
+		ID:           "BK-92821",
+		CustomerName: "Ada",
+		ServiceName:  "Oso Lounge",
+		StartsAt:     time.Date(2026, 9, 5, 20, 30, 0, 0, time.UTC),
+		PartySize:    5,
+	}
+	got := bookingConfirmationTemplateParams(booking, "https://kamadevaprive.com/apple-touch-icon.png")
+	if got["header_image_url"] != "https://kamadevaprive.com/apple-touch-icon.png" {
+		t.Fatalf("expected header image URL to be included, got %#v", got["header_image_url"])
 	}
 }
 

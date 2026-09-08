@@ -45,6 +45,7 @@ type Config struct {
 	WhatsAppAppSecret                   string
 	WhatsAppAPIVersion                  string
 	WhatsAppBookingConfirmationTemplate string
+	WhatsAppBookingHeaderImageURL       string
 	WhatsAppWorkerEnabled               bool
 	WhatsAppWorkerInterval              time.Duration
 	AIProvider                          string
@@ -97,6 +98,7 @@ func Load() (Config, error) {
 		WhatsAppAppSecret:                   os.Getenv("WHATSAPP_APP_SECRET"),
 		WhatsAppAPIVersion:                  valueOrDefault(os.Getenv("WHATSAPP_API_VERSION"), "v25.0"),
 		WhatsAppBookingConfirmationTemplate: valueOrDefault(firstEnv("WHATSAPP_BOOKING_TEMPLATE", "WHATSAPP_BOOKING_CONFIRMATION_TEMPLATE"), "booking_received"),
+		WhatsAppBookingHeaderImageURL:       os.Getenv("WHATSAPP_BOOKING_HEADER_IMAGE_URL"),
 		WhatsAppWorkerEnabled:               boolFromEnv("WHATSAPP_WORKER_ENABLED", false),
 		WhatsAppWorkerInterval:              durationFromEnv("WHATSAPP_WORKER_INTERVAL", 15*time.Second),
 		AIProvider:                          valueOrDefault(os.Getenv("AI_PROVIDER"), "disabled"),

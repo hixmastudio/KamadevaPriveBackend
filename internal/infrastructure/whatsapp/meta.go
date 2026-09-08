@@ -66,6 +66,22 @@ func BuildTemplateMessagePayload(to string, template string, params map[string]s
 	for _, key := range keys {
 		parameters = append(parameters, map[string]string{"type": "text", "text": params[key]})
 	}
+	components := make([]map[string]any, 0, 2)
+	if headerImageURL := strings.TrimSpace(params["header_image_url"]); headerImageURL != "" {
+		components = append(components, map[string]any{
+			"type": "header",
+			"parameters": []map[string]any{{
+				"type": "image",
+				"image": map[string]string{
+					"link": headerImageURL,
+				},
+			}},
+		})
+	}
+	components = append(components, map[string]any{
+		"type":       "body",
+		"parameters": parameters,
+	})
 	return map[string]any{
 		"messaging_product": "whatsapp",
 		"to":                normalizeRecipient(to),
@@ -75,10 +91,7 @@ func BuildTemplateMessagePayload(to string, template string, params map[string]s
 			"language": map[string]string{
 				"code": "en",
 			},
-			"components": []map[string]any{{
-				"type":       "body",
-				"parameters": parameters,
-			}},
+			"components": components,
 		},
 	}
 }
@@ -120,7 +133,7 @@ func normalizeRecipient(to string) string {
 }
 
 func orderedTemplateParamKeys(params map[string]string) []string {
-	knownOrder := []string{"customer_name", "venue", "date", "time", "guests", "booking_reference"}
+	knownOrder := []string{"customer_name", "venue", "date", "time", "guests", "address", "booking_reference"}
 	seen := map[string]bool{}
 	keys := make([]string, 0, len(params))
 	for _, key := range knownOrder {
@@ -132,6 +145,9 @@ func orderedTemplateParamKeys(params map[string]string) []string {
 
 	rest := make([]string, 0, len(params)-len(keys))
 	for key := range params {
+		if key == "header_image_url" {
+			continue
+		}
 		if !seen[key] {
 			rest = append(rest, key)
 		}
