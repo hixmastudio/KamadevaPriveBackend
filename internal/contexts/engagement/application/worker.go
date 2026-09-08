@@ -83,6 +83,8 @@ func (w *Worker) ProcessEvent(ctx context.Context, event engagementdomain.Outbox
 		return w.sendBookingConfirmation(ctx, event)
 	case engagementdomain.EventWhatsAppInboundReceived:
 		return w.processInbound(ctx, event)
+	case engagementdomain.EventWhatsAppAdminReply:
+		return w.sendAdminReply(ctx, event)
 	default:
 		return fmt.Errorf("unsupported engagement event type %q", event.Type)
 	}
@@ -128,6 +130,63 @@ func (w *Worker) sendBookingConfirmation(ctx context.Context, event engagementdo
 		CreatedAt:         time.Now(),
 	})
 	return err
+}
+
+func (w *Worker) sendAdminReply(ctx context.Context, event engagementdomain.OutboxEvent) error {
+	var payload struct {
+		ConversationID string `json:"conversation_id"`
+		CustomerID     string `json:"customer_id"`
+		Body           string `json:"body"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return err
+	}
+	conversationID := firstNonEmpty(payload.ConversationID, event.AggregateID)
+	if conversationID == "" {
+		return fmt.Errorf("WhatsApp admin reply has no conversation ID")
+	}
+	body := strings.TrimSpace(payload.Body)
+	if body == "" {
+		return fmt.Errorf("WhatsApp admin reply has no body")
+	}
+	conversation, err := w.repo.GetConversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	customerID := firstNonEmpty(payload.CustomerID, conversation.CustomerID)
+	customer, err := w.repo.GetCustomer(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	to := NormalizePhone(customer.Phone)
+	if to == "" {
+		return fmt.Errorf("conversation %s has no WhatsApp destination", conversationID)
+	}
+	result, err := w.messages.SendText(ctx, to, body)
+	if err != nil {
+		w.logger.Error("whatsapp_admin_reply_failed", "conversation_id", conversation.ID, "to", to, "error", err)
+		return err
+	}
+	messageID := ""
+	if result != nil {
+		messageID = result.MessageID
+	}
+	if err := w.repo.SetConversationStatus(ctx, conversation.ID, engagementdomain.ConversationHumanActive); err != nil {
+		return err
+	}
+	_, err = w.repo.SaveMessage(ctx, engagementdomain.ConversationMessage{
+		ConversationID:    conversation.ID,
+		ExternalMessageID: messageID,
+		Direction:         engagementdomain.DirectionOutbound,
+		SenderType:        engagementdomain.SenderHuman,
+		Body:              body,
+		CreatedAt:         time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	w.logger.Info("whatsapp_admin_reply_sent", "conversation_id", conversation.ID, "to", to, "message_id", messageID)
+	return nil
 }
 
 func (w *Worker) processInbound(ctx context.Context, event engagementdomain.OutboxEvent) error {

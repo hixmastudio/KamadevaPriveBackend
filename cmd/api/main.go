@@ -90,6 +90,7 @@ func main() {
 		Maintenance:  operationsapp.NewMaintenanceService(ops),
 		Reports:      reportingapp.NewCaptureRateQueryService(ops),
 		Webhooks:     engagementapp.NewWebhookIntakeService(ops, cfg.WhatsAppVerifyToken, cfg.WhatsAppAppSecret, slog.Default()),
+		Inbox:        engagementapp.NewInboxService(ops, whatsAppClient, slog.Default()),
 	})
 
 	appCtx, cancelApp := context.WithCancel(context.Background())

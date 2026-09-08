@@ -138,6 +138,44 @@ func TestHumanActiveConversationDisablesAIResponse(t *testing.T) {
 	}
 }
 
+func TestAdminReplyEventSendsWhatsAppAndPersistsHumanMessage(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{
+		"conversation_id": "conv_1",
+		"customer_id":     "cust_1",
+		"body":            "Good evening, your table is ready.",
+	})
+	repo := &workerRepo{
+		customer: engagementdomain.CustomerSummary{ID: "cust_1", Phone: "+2348012345678"},
+		conversation: engagementdomain.Conversation{
+			ID:         "conv_1",
+			CustomerID: "cust_1",
+			Status:     engagementdomain.ConversationWaitingForHuman,
+			Channel:    engagementdomain.ChannelWhatsApp,
+		},
+	}
+	messages := &fakeMessenger{}
+	worker := NewWorker(repo, messages, nil, time.Second, nil)
+
+	err := worker.ProcessEvent(context.Background(), engagementdomain.OutboxEvent{
+		ID:          "evt_4",
+		Type:        engagementdomain.EventWhatsAppAdminReply,
+		AggregateID: "conv_1",
+		Payload:     payload,
+	})
+	if err != nil {
+		t.Fatalf("expected admin reply sent: %v", err)
+	}
+	if len(messages.sent) != 1 || messages.sent[0] != "Good evening, your table is ready." {
+		t.Fatalf("expected WhatsApp reply sent, got %#v", messages.sent)
+	}
+	if repo.status != engagementdomain.ConversationHumanActive {
+		t.Fatalf("expected human-active status, got %q", repo.status)
+	}
+	if len(repo.messages) != 1 || repo.messages[0].SenderType != engagementdomain.SenderHuman {
+		t.Fatalf("expected persisted human outbound message, got %#v", repo.messages)
+	}
+}
+
 func TestPendingCancellationRequiresExplicitConfirmation(t *testing.T) {
 	args, _ := json.Marshal(map[string]string{"booking_id": "BK-1"})
 	pending, _ := json.Marshal(engagementdomain.PendingAction{
@@ -225,12 +263,17 @@ type workerRepo struct {
 	customer       engagementdomain.CustomerSummary
 	conversation   engagementdomain.Conversation
 	messages       []engagementdomain.ConversationMessage
+	status         string
 	cancelled      bool
 	pendingCleared bool
 }
 
 func (r *workerRepo) GetBooking(context.Context, string) (*engagementdomain.BookingSummary, error) {
 	return &r.booking, nil
+}
+
+func (r *workerRepo) GetCustomer(context.Context, string) (*engagementdomain.CustomerSummary, error) {
+	return &r.customer, nil
 }
 
 func (r *workerRepo) GetCustomerByPhone(context.Context, string) (*engagementdomain.CustomerSummary, error) {
@@ -253,6 +296,11 @@ func (r *workerRepo) SetPendingAction(_ context.Context, _ string, action *engag
 	if action == nil {
 		r.pendingCleared = true
 	}
+	return nil
+}
+
+func (r *workerRepo) SetConversationStatus(_ context.Context, _ string, status string) error {
+	r.status = status
 	return nil
 }
 

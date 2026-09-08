@@ -180,6 +180,14 @@ func (o *Operations) GetBooking(ctx context.Context, bookingID string) (*engagem
 	return &booking, nil
 }
 
+func (o *Operations) GetCustomer(ctx context.Context, customerID string) (*engagementdomain.CustomerSummary, error) {
+	var customer engagementdomain.CustomerSummary
+	if err := o.rpc(ctx, "engagement_get_customer", map[string]any{"p_customer_id": customerID}, &customer); err != nil {
+		return nil, err
+	}
+	return &customer, nil
+}
+
 func (o *Operations) GetCustomerByPhone(ctx context.Context, phone string) (*engagementdomain.CustomerSummary, error) {
 	var customer engagementdomain.CustomerSummary
 	if err := o.rpc(ctx, "engagement_get_customer_by_phone", map[string]any{"p_phone": phone}, &customer); err != nil {
@@ -194,6 +202,17 @@ func (o *Operations) GetCustomerActiveBookings(ctx context.Context, customerID s
 		return nil, err
 	}
 	return bookings, nil
+}
+
+func (o *Operations) ListConversations(ctx context.Context, status string, limit int) ([]engagementdomain.ConversationOverview, error) {
+	var conversations []engagementdomain.ConversationOverview
+	if err := o.rpc(ctx, "engagement_admin_list_conversations", map[string]any{
+		"p_status": nullableString(status),
+		"p_limit":  limit,
+	}, &conversations); err != nil {
+		return nil, err
+	}
+	return conversations, nil
 }
 
 func (o *Operations) FindOrCreateConversation(ctx context.Context, customerID, bookingID, channel string) (*engagementdomain.Conversation, error) {

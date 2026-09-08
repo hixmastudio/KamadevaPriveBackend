@@ -33,6 +33,7 @@ type Server struct {
 	maintenance  operationsapp.MaintenanceService
 	reports      reportingapp.CaptureRateQueryService
 	webhooks     engagementapp.WebhookIntakeService
+	inbox        engagementapp.InboxService
 	mux          *http.ServeMux
 	logger       *slog.Logger
 }
@@ -46,6 +47,7 @@ type Dependencies struct {
 	Maintenance  operationsapp.MaintenanceService
 	Reports      reportingapp.CaptureRateQueryService
 	Webhooks     engagementapp.WebhookIntakeService
+	Inbox        engagementapp.InboxService
 }
 
 type SambaSourceRuntime struct {
@@ -67,6 +69,7 @@ func NewServer(deps Dependencies) http.Handler {
 		maintenance:  deps.Maintenance,
 		reports:      deps.Reports,
 		webhooks:     deps.Webhooks,
+		inbox:        deps.Inbox,
 		mux:          http.NewServeMux(),
 		logger:       slog.Default(),
 	}
@@ -98,6 +101,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /webhooks/whatsapp", s.whatsAppWebhookVerify)
 	s.mux.HandleFunc("POST /webhooks/whatsapp", s.whatsAppWebhookPost)
 	s.mux.HandleFunc("POST /integrations/whatsapp/inbound", s.auth(s.whatsAppWebhookPost))
+	s.mux.HandleFunc("GET /admin/whatsapp/conversations", s.auth(s.listWhatsAppConversations))
+	s.mux.HandleFunc("GET /admin/whatsapp/conversations/{conversationID}/messages", s.auth(s.listWhatsAppMessages))
+	s.mux.HandleFunc("POST /admin/whatsapp/conversations/{conversationID}/reply", s.auth(s.replyToWhatsAppConversation))
+	s.mux.HandleFunc("POST /admin/whatsapp/conversations/{conversationID}/status", s.auth(s.setWhatsAppConversationStatus))
 	s.mux.HandleFunc("POST /integrations/wallet/cards/events", s.auth(s.genericWebhook))
 	s.mux.HandleFunc("POST /integrations/payments/events", s.auth(s.genericWebhook))
 	s.mux.HandleFunc("POST /jobs/tier-decay-sweep", s.auth(s.tierDecaySweep))
@@ -332,6 +339,41 @@ func (s *Server) whatsAppWebhookPost(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, out, err)
 }
 
+func (s *Server) listWhatsAppConversations(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	conversations, err := s.inbox.ListConversations(r.Context(), q.Get("status"), parsePositiveInt(q.Get("limit"), 50))
+	writeResult(w, map[string]any{"conversations": conversations}, err)
+}
+
+func (s *Server) listWhatsAppMessages(w http.ResponseWriter, r *http.Request) {
+	messages, err := s.inbox.Messages(r.Context(), r.PathValue("conversationID"), parsePositiveInt(r.URL.Query().Get("limit"), 100))
+	writeResult(w, map[string]any{"messages": messages}, err)
+}
+
+func (s *Server) replyToWhatsAppConversation(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Body string `json:"body"`
+	}
+	if err := readJSON(w, r, s.cfg.MaxRequestBytes, &payload); err != nil {
+		writeError(w, shareddomain.ValidationError(map[string]string{"body": "expected JSON request body"}))
+		return
+	}
+	message, err := s.inbox.SendHumanReply(r.Context(), r.PathValue("conversationID"), payload.Body)
+	writeResult(w, map[string]any{"message": message}, err)
+}
+
+func (s *Server) setWhatsAppConversationStatus(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := readJSON(w, r, s.cfg.MaxRequestBytes, &payload); err != nil {
+		writeError(w, shareddomain.ValidationError(map[string]string{"body": "expected JSON request body"}))
+		return
+	}
+	err := s.inbox.SetConversationStatus(r.Context(), r.PathValue("conversationID"), payload.Status)
+	writeResult(w, map[string]any{"ok": true}, err)
+}
+
 func (s *Server) genericWebhook(w http.ResponseWriter, r *http.Request) {
 	var payload map[string]any
 	if err := readJSON(w, r, s.cfg.MaxRequestBytes, &payload); err != nil {
@@ -432,6 +474,18 @@ func applyRunQuery(r *http.Request, payload *posapp.SambaTransactionOrchestrator
 	if venueID := strings.TrimSpace(q.Get("venue_id")); venueID != "" {
 		payload.VenueID = venueID
 	}
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	var value int
+	if _, err := fmt.Sscanf(raw, "%d", &value); err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func writeResult(w http.ResponseWriter, body any, err error) {

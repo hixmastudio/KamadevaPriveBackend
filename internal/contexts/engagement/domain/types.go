@@ -24,6 +24,7 @@ const (
 
 	EventBookingCreated          = "booking.created"
 	EventWhatsAppInboundReceived = "whatsapp.inbound.received"
+	EventWhatsAppAdminReply      = "whatsapp.admin.reply_requested"
 
 	ActionStatusPending = "pending"
 	ActionStatusSuccess = "success"
@@ -49,7 +50,29 @@ type ConversationMessage struct {
 	Direction         string    `json:"direction"`
 	SenderType        string    `json:"sender_type"`
 	Body              string    `json:"body"`
+	DeliveryStatus    string    `json:"delivery_status,omitempty"`
+	FailureCode       string    `json:"failure_code,omitempty"`
+	FailureText       string    `json:"failure_text,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ConversationOverview struct {
+	ID              string    `json:"id"`
+	CustomerID      string    `json:"customer_id"`
+	CustomerName    string    `json:"customer_name,omitempty"`
+	CustomerPhone   string    `json:"customer_phone,omitempty"`
+	BookingID       string    `json:"booking_id,omitempty"`
+	VenueName       string    `json:"venue_name,omitempty"`
+	BookingStatus   string    `json:"booking_status,omitempty"`
+	BookingStartsAt time.Time `json:"booking_starts_at,omitempty"`
+	PartySize       int       `json:"party_size,omitempty"`
+	Channel         string    `json:"channel"`
+	Status          string    `json:"status"`
+	LastMessage     string    `json:"last_message,omitempty"`
+	LastDirection   string    `json:"last_direction,omitempty"`
+	LastMessageAt   time.Time `json:"last_message_at,omitempty"`
+	UnreadCount     int       `json:"unread_count"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type BookingSummary struct {
@@ -155,8 +178,10 @@ type Repository interface {
 	MarkOutboxEventDone(ctx context.Context, eventID string) error
 	MarkOutboxEventFailed(ctx context.Context, eventID string, reason string) error
 	GetBooking(ctx context.Context, bookingID string) (*BookingSummary, error)
+	GetCustomer(ctx context.Context, customerID string) (*CustomerSummary, error)
 	GetCustomerByPhone(ctx context.Context, phone string) (*CustomerSummary, error)
 	GetCustomerActiveBookings(ctx context.Context, customerID string) ([]BookingSummary, error)
+	ListConversations(ctx context.Context, status string, limit int) ([]ConversationOverview, error)
 	FindOrCreateConversation(ctx context.Context, customerID, bookingID, channel string) (*Conversation, error)
 	GetConversation(ctx context.Context, conversationID string) (*Conversation, error)
 	SetConversationStatus(ctx context.Context, conversationID, status string) error

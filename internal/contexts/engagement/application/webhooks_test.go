@@ -105,10 +105,16 @@ func (f *fakeRepo) MarkOutboxEventFailed(context.Context, string, string) error 
 func (f *fakeRepo) GetBooking(context.Context, string) (*engagementdomain.BookingSummary, error) {
 	return &engagementdomain.BookingSummary{}, nil
 }
+func (f *fakeRepo) GetCustomer(context.Context, string) (*engagementdomain.CustomerSummary, error) {
+	return &engagementdomain.CustomerSummary{}, nil
+}
 func (f *fakeRepo) GetCustomerByPhone(context.Context, string) (*engagementdomain.CustomerSummary, error) {
 	return &engagementdomain.CustomerSummary{}, nil
 }
 func (f *fakeRepo) GetCustomerActiveBookings(context.Context, string) ([]engagementdomain.BookingSummary, error) {
+	return nil, nil
+}
+func (f *fakeRepo) ListConversations(context.Context, string, int) ([]engagementdomain.ConversationOverview, error) {
 	return nil, nil
 }
 func (f *fakeRepo) FindOrCreateConversation(context.Context, string, string, string) (*engagementdomain.Conversation, error) {
