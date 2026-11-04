@@ -1,6 +1,7 @@
 package samba
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -153,12 +154,12 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 
 func (c *Client) FetchCleanTickets(ctx context.Context, query posdomain.SambaCleanTicketQuery) (json.RawMessage, error) {
 	values := url.Values{}
-	switch {
-	case query.Page > 0:
-		values.Set("page", fmt.Sprintf("%d", query.Page))
-	default:
+	if query.From != "" {
 		values.Set("from", query.From)
 		values.Set("to", query.To)
+	}
+	if query.Page > 0 {
+		values.Set("page", fmt.Sprintf("%d", query.Page))
 	}
 	return c.getRaw(ctx, "/clean/ticket", values)
 }
@@ -168,34 +169,49 @@ func (c *Client) FetchCleanTicket(ctx context.Context, ticketNumber string) (jso
 }
 
 func (c *Client) getRaw(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
+	return c.send(ctx, http.MethodGet, path, query, nil)
+}
+
+func (c *Client) send(ctx context.Context, method, path string, query url.Values, body any) (json.RawMessage, error) {
 	endpoint := c.baseURL + path
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
 	}
 	start := time.Now()
 	c.logger.Info("samba_api_request_started",
-		"method", http.MethodGet,
+		"method", method,
 		"path", path,
 		"query", query.Encode(),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("X-API-Key", c.apiKey)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	res, err := c.client.Do(req)
 	if err != nil {
 		c.logger.Error("samba_api_request_failed",
-			"method", http.MethodGet,
+			"method", method,
 			"path", path,
 			"query", query.Encode(),
 			"duration_ms", time.Since(start).Milliseconds(),
 			"error", err,
 		)
-		return nil, err
+		return nil, shareddomain.UpstreamError(fmt.Sprintf("Samba API %s %s is unreachable", method, path), nil)
 	}
 	defer res.Body.Close()
 
@@ -203,7 +219,7 @@ func (c *Client) getRaw(ctx context.Context, path string, query url.Values) (jso
 		raw, readErr := io.ReadAll(res.Body)
 		if readErr != nil {
 			c.logger.Error("samba_api_error_body_read_failed",
-				"method", http.MethodGet,
+				"method", method,
 				"path", path,
 				"query", query.Encode(),
 				"status", res.StatusCode,
@@ -213,10 +229,12 @@ func (c *Client) getRaw(ctx context.Context, path string, query url.Values) (jso
 			return nil, readErr
 		}
 		var details any
-		_ = json.Unmarshal(raw, &details)
+		if json.Unmarshal(raw, &details) != nil && len(raw) > 0 {
+			details = strings.TrimSpace(string(raw))
+		}
 		c.logger.Error("samba_api_request_upstream_error",
 			append([]any{
-				"method", http.MethodGet,
+				"method", method,
 				"path", path,
 				"query", query.Encode(),
 				"status", res.StatusCode,
@@ -224,23 +242,23 @@ func (c *Client) getRaw(ctx context.Context, path string, query url.Values) (jso
 				"body_bytes", len(raw),
 			}, upstreamDetailLogAttrs(details)...)...,
 		)
-		return nil, shareddomain.UpstreamError(fmt.Sprintf("Samba API GET %s failed", path), details)
+		return nil, upstreamStatusError(method, path, res.StatusCode, details)
 	}
 
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		c.logger.Error("samba_api_response_read_failed",
-			"method", http.MethodGet,
+			"method", method,
 			"path", path,
 			"query", query.Encode(),
 			"status", res.StatusCode,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"error", err,
 		)
-		return nil, fmt.Errorf("read Samba API GET %s: %w", path, err)
+		return nil, fmt.Errorf("read Samba API %s %s: %w", method, path, err)
 	}
 	c.logger.Info("samba_api_request_completed",
-		"method", http.MethodGet,
+		"method", method,
 		"path", path,
 		"query", query.Encode(),
 		"status", res.StatusCode,
@@ -248,6 +266,21 @@ func (c *Client) getRaw(ctx context.Context, path string, query url.Values) (jso
 		"body_bytes", len(raw),
 	)
 	return json.RawMessage(raw), nil
+}
+
+// upstreamStatusError keeps the vendor's client-side errors meaningful to our
+// callers (bad column, unknown row, writes disabled) and folds everything else,
+// including bb-room's 500 on read-only tables, into a 502.
+func upstreamStatusError(method, path string, status int, details any) error {
+	switch status {
+	case http.StatusBadRequest:
+		return &shareddomain.AppError{Status: http.StatusBadRequest, Code: "samba_rejected", Message: "Samba rejected the request.", Details: details}
+	case http.StatusForbidden:
+		return &shareddomain.AppError{Status: http.StatusForbidden, Code: "samba_writes_disabled", Message: "Samba writes are disabled at this site.", Details: details}
+	case http.StatusNotFound:
+		return &shareddomain.AppError{Status: http.StatusNotFound, Code: "not_found", Message: "Samba has no such table or row.", Details: details}
+	}
+	return shareddomain.UpstreamError(fmt.Sprintf("Samba API %s %s failed", method, path), details)
 }
 
 type TicketCache struct {

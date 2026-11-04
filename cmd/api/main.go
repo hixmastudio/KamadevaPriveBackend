@@ -61,15 +61,18 @@ func main() {
 		RunOnStart: cfg.BoomBoomRoomOrchestratorOnStart,
 	}, boomBoomPull, slog.Default())
 
-	sambaSources := map[string]httpapi.SambaSourceRuntime{
-		"oso-lounge": {
+	sambaSources := map[string]httpapi.SambaSourceRuntime{}
+	if sambaClient != nil {
+		sambaSources["oso-lounge"] = httpapi.SambaSourceRuntime{
 			Key:          "oso-lounge",
 			DisplayName:  "Oso Lounge",
 			VenueID:      cfg.SambaVenueID,
 			Pull:         sambaPull,
 			CleanTickets: posapp.NewCleanSambaTicketService(sambaClient),
+			Reference:    posapp.NewSambaReferenceService(sambaClient, sambaClient),
+			Customers:    posapp.NewSambaCustomerService(sambaClient, slog.Default()),
 			Orchestrator: orchestrator,
-		},
+		}
 	}
 	if boomBoomClient != nil {
 		sambaSources["boom-boom-room"] = httpapi.SambaSourceRuntime{
@@ -78,6 +81,8 @@ func main() {
 			VenueID:      cfg.BoomBoomRoomVenueID,
 			Pull:         boomBoomPull,
 			CleanTickets: posapp.NewCleanSambaTicketService(boomBoomClient),
+			Reference:    posapp.NewSambaReferenceService(boomBoomClient, boomBoomClient),
+			Customers:    posapp.NewSambaCustomerService(boomBoomClient, slog.Default()),
 			Orchestrator: boomBoomOrchestrator,
 		}
 	}
@@ -91,6 +96,7 @@ func main() {
 		Reports:      reportingapp.NewCaptureRateQueryService(ops),
 		Webhooks:     engagementapp.NewWebhookIntakeService(ops, cfg.WhatsAppVerifyToken, cfg.WhatsAppAppSecret, slog.Default()),
 		Inbox:        engagementapp.NewInboxService(ops, whatsAppClient, slog.Default()),
+		StaffAuth:    ops,
 	})
 
 	appCtx, cancelApp := context.WithCancel(context.Background())

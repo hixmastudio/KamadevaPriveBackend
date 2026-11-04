@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,17 +26,19 @@ import (
 )
 
 type Server struct {
-	cfg          config.Config
-	tickets      posapp.TicketIngestionService
-	sambaPull    posapp.SambaPullService
-	orchestrator *posapp.SambaTransactionOrchestrator
-	sambaSources map[string]SambaSourceRuntime
-	maintenance  operationsapp.MaintenanceService
-	reports      reportingapp.CaptureRateQueryService
-	webhooks     engagementapp.WebhookIntakeService
-	inbox        engagementapp.InboxService
-	mux          *http.ServeMux
-	logger       *slog.Logger
+	cfg                config.Config
+	tickets            posapp.TicketIngestionService
+	sambaPull          posapp.SambaPullService
+	orchestrator       *posapp.SambaTransactionOrchestrator
+	sambaSources       map[string]SambaSourceRuntime
+	maintenance        operationsapp.MaintenanceService
+	reports            reportingapp.CaptureRateQueryService
+	webhooks           engagementapp.WebhookIntakeService
+	inbox              engagementapp.InboxService
+	staffAuthenticator StaffAuthenticator
+	staffTokens        *staffTokenCache
+	mux                *http.ServeMux
+	logger             *slog.Logger
 }
 
 type Dependencies struct {
@@ -48,6 +51,7 @@ type Dependencies struct {
 	Reports      reportingapp.CaptureRateQueryService
 	Webhooks     engagementapp.WebhookIntakeService
 	Inbox        engagementapp.InboxService
+	StaffAuth    StaffAuthenticator
 }
 
 type SambaSourceRuntime struct {
@@ -56,22 +60,26 @@ type SambaSourceRuntime struct {
 	VenueID      string
 	Pull         posapp.SambaPullService
 	CleanTickets posapp.CleanSambaTicketService
+	Reference    posapp.SambaReferenceService
+	Customers    posapp.SambaCustomerService
 	Orchestrator *posapp.SambaTransactionOrchestrator
 }
 
 func NewServer(deps Dependencies) http.Handler {
 	s := &Server{
-		cfg:          deps.Config,
-		tickets:      deps.Tickets,
-		sambaPull:    deps.SambaPull,
-		orchestrator: deps.Orchestrator,
-		sambaSources: deps.SambaSources,
-		maintenance:  deps.Maintenance,
-		reports:      deps.Reports,
-		webhooks:     deps.Webhooks,
-		inbox:        deps.Inbox,
-		mux:          http.NewServeMux(),
-		logger:       slog.Default(),
+		cfg:                deps.Config,
+		tickets:            deps.Tickets,
+		sambaPull:          deps.SambaPull,
+		orchestrator:       deps.Orchestrator,
+		sambaSources:       deps.SambaSources,
+		maintenance:        deps.Maintenance,
+		reports:            deps.Reports,
+		webhooks:           deps.Webhooks,
+		inbox:              deps.Inbox,
+		staffAuthenticator: deps.StaffAuth,
+		staffTokens:        &staffTokenCache{},
+		mux:                http.NewServeMux(),
+		logger:             slog.Default(),
 	}
 	s.routes()
 	return s
@@ -89,15 +97,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /integrations/pos/samba/pull-tickets", s.auth(s.pullSambaTickets))
 	s.mux.HandleFunc("GET /integrations/pos/samba/orchestrator", s.auth(s.sambaOrchestratorStatus))
 	s.mux.HandleFunc("POST /integrations/pos/samba/orchestrator/run", s.auth(s.runSambaOrchestrator))
-	s.mux.HandleFunc("GET /integrations/pos/samba/{source}/clean/ticket", s.auth(s.cleanSambaTicketsForSource))
-	s.mux.HandleFunc("GET /integrations/pos/samba/{source}/clean/ticket/{ticketNumber}", s.auth(s.cleanSambaTicketForSource))
-	s.mux.HandleFunc("GET /integrations/pos/samba/sources", s.auth(s.listSambaSources))
-	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/source-health", s.auth(s.sambaSourceHealthForSource))
+	s.mux.HandleFunc("GET /integrations/pos/samba/{source}/clean/ticket", s.staffAuth(s.cleanSambaTicketsForSource))
+	s.mux.HandleFunc("GET /integrations/pos/samba/{source}/clean/ticket/{ticketNumber}", s.staffAuth(s.cleanSambaTicketForSource))
+	s.mux.HandleFunc("GET /integrations/pos/samba/sources", s.staffAuth(s.listSambaSources))
+	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/source-health", s.staffAuth(s.sambaSourceHealthForSource))
 	s.mux.HandleFunc("POST /integrations/pos/samba/sources/{source}/pull-tickets", s.auth(s.pullSambaTicketsForSource))
-	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/clean/ticket", s.auth(s.cleanSambaTicketsForSource))
-	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/clean/ticket/{ticketNumber}", s.auth(s.cleanSambaTicketForSource))
-	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/orchestrator", s.auth(s.sambaOrchestratorStatusForSource))
+	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/clean/ticket", s.staffAuth(s.cleanSambaTicketsForSource))
+	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/clean/ticket/{ticketNumber}", s.staffAuth(s.cleanSambaTicketForSource))
+	s.mux.HandleFunc("GET /integrations/pos/samba/sources/{source}/orchestrator", s.staffAuth(s.sambaOrchestratorStatusForSource))
 	s.mux.HandleFunc("POST /integrations/pos/samba/sources/{source}/orchestrator/run", s.auth(s.runSambaOrchestratorForSource))
+	s.sambaStaffRoutes()
 	s.mux.HandleFunc("GET /webhooks/whatsapp", s.whatsAppWebhookVerify)
 	s.mux.HandleFunc("POST /webhooks/whatsapp", s.whatsAppWebhookPost)
 	s.mux.HandleFunc("POST /integrations/whatsapp/inbound", s.auth(s.whatsAppWebhookPost))
@@ -194,6 +203,7 @@ func (s *Server) listSambaSources(w http.ResponseWriter, r *http.Request) {
 			Enabled:     enabled,
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	writeJSON(w, http.StatusOK, map[string]any{"sources": out})
 }
 
@@ -300,7 +310,7 @@ func (s *Server) sambaSource(w http.ResponseWriter, r *http.Request) (SambaSourc
 	switch source {
 	case "oso":
 		source = "oso-lounge"
-	case "bbr":
+	case "bbr", "bb-room":
 		source = "boom-boom-room"
 	}
 	runtime, ok := s.sambaSources[source]
@@ -579,9 +589,9 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		origin := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/")
 		if _, ok := allowedOrigins[origin]; ok {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-KP-API-Key, X-KP-Signature, X-Request-ID")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-KP-Import-Source-Count, X-KP-Import-Imported-Count, X-KP-Import-Failed-Count")
 			w.Header().Set("Vary", "Origin")
 		}
 

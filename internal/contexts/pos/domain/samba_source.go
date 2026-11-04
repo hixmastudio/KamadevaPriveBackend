@@ -42,7 +42,7 @@ type SambaSourceTicket struct {
 	CreatedUserName      string                   `json:"createdUserName"`
 	LastModifiedUserName string                   `json:"lastModifiedUserName"`
 	TicketTags           string                   `json:"ticketTags"`
-	TicketStates         []map[string]any         `json:"ticketStates"`
+	TicketStates         SambaJSONList            `json:"ticketStates"`
 	Orders               []SambaSourceOrder       `json:"orders"`
 	Payments             []SambaSourcePayment     `json:"payments"`
 	Calculations         []SambaSourceCalculation `json:"calculations"`
@@ -50,12 +50,12 @@ type SambaSourceTicket struct {
 }
 
 type SambaSourceOrder struct {
-	MenuItemName   string           `json:"menuItemName"`
-	PortionName    string           `json:"portionName"`
-	Price          float64          `json:"price"`
-	Quantity       float64          `json:"quantity"`
-	CalculatePrice bool             `json:"calculatePrice"`
-	OrderStates    []map[string]any `json:"orderStates"`
+	MenuItemName   string        `json:"menuItemName"`
+	PortionName    string        `json:"portionName"`
+	Price          float64       `json:"price"`
+	Quantity       float64       `json:"quantity"`
+	CalculatePrice bool          `json:"calculatePrice"`
+	OrderStates    SambaJSONList `json:"orderStates"`
 }
 
 type SambaSourcePayment struct {
@@ -116,4 +116,36 @@ func (n *SambaNumber) UnmarshalJSON(raw []byte) error {
 
 func (n SambaNumber) Float64() float64 {
 	return float64(n)
+}
+
+// SambaJSONList decodes Samba state/tag lists. The vendor documents them as
+// JSON strings that must be parsed a second time, but some routes already
+// return arrays, so both shapes are accepted.
+type SambaJSONList []map[string]any
+
+func (l *SambaJSONList) UnmarshalJSON(raw []byte) error {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		*l = nil
+		return nil
+	}
+	if strings.HasPrefix(value, `"`) {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return err
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			*l = nil
+			return nil
+		}
+		raw = []byte(text)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		*l = nil
+		return nil
+	}
+	*l = items
+	return nil
 }

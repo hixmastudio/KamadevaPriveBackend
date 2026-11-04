@@ -1,7 +1,10 @@
-# Oso Lounge Samba API
+# Oso Lounge & bb-room Samba API
 
-This is the vendor-provided Samba POS read API used by the backend to pull data
-from the Oso Lounge till service.
+This is the vendor-provided Samba POS API (verified 23 Oct 2026) used by the
+backend at both sites. The same API runs at Oso Lounge
+(`https://oso-lounge.backhaus.website`) and bb-room / Boom Boom Room
+(`https://bb-room.backhaus.website`), each with its own `X-API-Key`. Configure
+bb-room with `BOOM_BOOM_ROOM_SAMBA_API_URL` and `BOOM_BOOM_ROOM_SAMBA_API_KEY`.
 
 ## Base URLs
 
@@ -39,7 +42,8 @@ Missing or incorrect keys return:
 { "error": "..." }
 ```
 
-All routes are `GET`. Other HTTP methods return `405`.
+All routes are `GET` except `/api/db/tables/{table}`, which also accepts
+`POST`, `PATCH` and `DELETE`. Other non-GET requests return `405`.
 
 ## Endpoints
 
@@ -167,6 +171,72 @@ Response shape:
   "rows": [{ "department": "Restaurant", "count": 0, "amount": 0 }]
 }
 ```
+
+### `GET /clean/ticket?from=&to=&page=`
+
+Simplified receipt-style tickets, 50 per page, newest first. `page` can be used
+alone or within a `from`/`to` range. `GET /clean/ticket/{number}` returns one
+ticket by printed number (latest match).
+
+### `/api/db/tables`
+
+- `GET /api/db/tables`: all tables with column/row counts and `writesEnabled`.
+- `GET /api/db/tables/{table}?page=&pageSize=`: `{columns, rows, total, totalPages}`;
+  `pageSize` max 500. There is no server-side filtering.
+- `POST /api/db/tables/{table}`: insert, returns `{rowsAffected, id}`.
+- `PATCH /api/db/tables/{table}/{id}`: update by primary key, returns `{rowsAffected}`.
+- `DELETE /api/db/tables/{table}/{id}`: delete by primary key, returns `{rowsAffected}`.
+
+Errors: `400` bad dates/range, unknown/identity/computed column, or a primary
+key in a PATCH body; `401` bad key; `403` writes disabled; `404` unknown table
+or row; `500` database unreachable, or at bb-room a write to a read-only table.
+
+Write permissions: `Entities`, `Accounts` and `EntityStateValues` are writable
+at both sites. All other tables are writable at Oso Lounge only.
+
+## Customers
+
+Samba has no customers route. Customers are `Entities` rows with
+`EntityTypeId = 1` (`2` = tables). `CustomData` is a JSON string such as
+`[{"Name":"Phone","Value":"080…"},{"Name":"Customer ID","Value":"4471"}]` and is
+replaced, not merged, on PATCH. bb-room customers only have Phone.
+
+The POS creates a customer in three calls, which the backend mirrors:
+
+1. `POST Accounts` `{AccountTypeId: 5, ForeignCurrencyId: 0, Name: "<Name>-<Phone>"}`
+2. `POST Entities` `{EntityTypeId: 1, Name, AccountId, CustomData, SearchString: "", Notes, WarehouseId: 0, LastUpdateTime}`
+   (`LastUpdateTime` has no default and is Lagos local time)
+3. `POST EntityStateValues` `{EntityId, EntityStates: "[{\"D\":\"\\/Date(<ms>+0100)\\/\",\"S\":\"Available\",\"SN\":\"Status\"}]"}`
+
+Delete runs in reverse: `EntityStateValues`, `Entities`, `Accounts`.
+
+### Backend customer endpoints
+
+These accept either `X-KP-API-Key` or `Authorization: Bearer <Supabase access
+token>` of an active staff member. `{source}` is `oso-lounge` (`oso`) or
+`boom-boom-room` (`bb-room`, `bbr`).
+
+| Method | Route | Notes |
+| --- | --- | --- |
+| GET | `/integrations/pos/samba/sources/{source}/customers?q=&page=&page_size=` | Search by name, Customer ID or phone digits |
+| GET | `/integrations/pos/samba/sources/{source}/customers/{id}` | One customer by entity id |
+| POST | `/integrations/pos/samba/sources/{source}/customers` | `{name, phone, customer_id?, notes?}`; rolls back on failure |
+| PATCH | `/integrations/pos/samba/sources/{source}/customers/{id}` | Any of `name, phone, customer_id, notes`; keeps other CustomData fields |
+| DELETE | `/integrations/pos/samba/sources/{source}/customers/{id}` | Managers only (founder, hosl, venue_manager) |
+
+### Backend reference endpoints
+
+Same auth. Upstream JSON is passed through unchanged.
+
+- `GET /integrations/pos/samba/sources/{source}/payments?from=&to=`
+- `GET /integrations/pos/samba/sources/{source}/sales-by-department?from=&to=`
+- `GET /integrations/pos/samba/sources/{source}/menu`
+- `GET /integrations/pos/samba/sources/{source}/staff`
+- `GET /integrations/pos/samba/sources/{source}/departments`
+- `GET /integrations/pos/samba/sources/{source}/db/tables` (managers)
+- `GET /integrations/pos/samba/sources/{source}/db/tables/{table}?page=&pageSize=` (managers)
+
+Generic table writes are intentionally not exposed by the backend.
 
 ## Date Rules
 

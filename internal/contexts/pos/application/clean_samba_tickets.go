@@ -48,27 +48,41 @@ func (s CleanSambaTicketService) Get(ctx context.Context, ticketNumber string) (
 }
 
 func (r CleanSambaTicketsRequest) query() (posdomain.SambaCleanTicketQuery, error) {
-	fields := map[string]string{}
 	from := strings.TrimSpace(r.From)
 	to := strings.TrimSpace(r.To)
 	pageText := strings.TrimSpace(r.Page)
 
+	page := 0
 	if pageText != "" {
-		if from != "" || to != "" {
-			return posdomain.SambaCleanTicketQuery{}, shareddomain.ValidationError(map[string]string{"query": "use either page or from/to, not both"})
-		}
-		page, err := strconv.Atoi(pageText)
-		if err != nil || page < 1 {
+		parsed, err := strconv.Atoi(pageText)
+		if err != nil || parsed < 1 {
 			return posdomain.SambaCleanTicketQuery{}, shareddomain.ValidationError(map[string]string{"page": "must be a positive integer"})
 		}
+		page = parsed
+	}
+	if page > 0 && from == "" && to == "" {
 		return posdomain.SambaCleanTicketQuery{Page: page}, nil
 	}
 
+	if err := validateSambaDateRange(from, to, "unless page is set"); err != nil {
+		return posdomain.SambaCleanTicketQuery{}, err
+	}
+	return posdomain.SambaCleanTicketQuery{From: from, To: to, Page: page}, nil
+}
+
+// validateSambaDateRange applies the vendor's rules: inclusive YYYY-MM-DD
+// dates, from <= to, at most 92 days.
+func validateSambaDateRange(from, to, requiredHint string) error {
+	fields := map[string]string{}
+	required := "is required"
+	if requiredHint != "" {
+		required += " " + requiredHint
+	}
 	if from == "" {
-		fields["from"] = "is required unless page is set"
+		fields["from"] = required
 	}
 	if to == "" {
-		fields["to"] = "is required unless page is set"
+		fields["to"] = required
 	}
 	fromDate, fromErr := time.Parse(time.DateOnly, from)
 	if from != "" && fromErr != nil {
@@ -87,7 +101,7 @@ func (r CleanSambaTicketsRequest) query() (posdomain.SambaCleanTicketQuery, erro
 		}
 	}
 	if len(fields) > 0 {
-		return posdomain.SambaCleanTicketQuery{}, shareddomain.ValidationError(fields)
+		return shareddomain.ValidationError(fields)
 	}
-	return posdomain.SambaCleanTicketQuery{From: from, To: to}, nil
+	return nil
 }

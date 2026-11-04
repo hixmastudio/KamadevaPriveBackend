@@ -389,9 +389,9 @@ paths:
       tags: [Samba POS]
       summary: Fetch clean tickets from a configured Samba source
       description: >
-        Proxies the Samba extension clean-ticket endpoint. Use either `from`
-        and `to` for an inclusive date range up to 92 days, or `page` for the
-        newest-first paginated feed with 50 tickets per page. Range reads first
+        Proxies the Samba extension clean-ticket endpoint. Use `from` and `to`
+        for an inclusive date range up to 92 days, `page` for the newest-first
+        paginated feed with 50 tickets per page, or both to page within a range. Range reads first
         import/upsert the same date range into Supabase via `/api/tickets`;
         if persistence fails, the request fails instead of returning unsaved data.
       parameters:
@@ -569,6 +569,289 @@ paths:
         "502":
           $ref: "#/components/responses/UpstreamError"
 
+  /integrations/pos/samba/sources/{source}/payments:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Payments for a date range
+      description: >
+        Proxies Samba `GET /api/payments`. Max 92 days.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/sales-by-department:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Sales totals by department
+      description: >
+        Proxies Samba `GET /api/sales-by-department`. Max 92 days.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/menu:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Menu departments, items, portions and prices
+      description: >
+        Proxies Samba `GET /api/menu`; join by id.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/staff:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: POS staff (id and name only)
+      description: >
+        Proxies Samba `GET /api/staff`.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/departments:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: POS departments
+      description: >
+        Proxies Samba `GET /api/departments`.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/db/tables:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: List Samba database tables (managers)
+      description: >
+        Proxies Samba `GET /api/db/tables`. Requires founder, hosl or venue_manager. Read-only; generic table writes are not exposed.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/db/tables/{table}:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Page through a Samba table (managers)
+      description: >
+        Proxies Samba `GET /api/db/tables/{table}`. Requires a manager role.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: table, in: path, required: true, schema: {type: string}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1}}
+        - {name: pageSize, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+      responses:
+        "200":
+          description: Upstream Samba JSON, passed through unchanged
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /integrations/pos/samba/sources/{source}/customers:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: List or search POS customers
+      description: >
+        Reads every Samba `Entities` row, keeps `EntityTypeId = 1`, and matches
+        `q` against name (substring), Customer ID (exact) or phone digits
+        (4+ digits, substring). Newest first.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: q, in: query, schema: {type: string}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        "200":
+          description: Customer page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  page: {type: integer}
+                  page_size: {type: integer}
+                  total: {type: integer}
+                  total_pages: {type: integer}
+                  customers:
+                    type: array
+                    items: {$ref: "#/components/schemas/SambaCustomer"}
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+    post:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Create a POS customer
+      description: >
+        Creates the customer the way the POS does: an `Accounts` row
+        (AccountTypeId 5, named `Name-Phone`), an `Entities` row linked to it,
+        and an `EntityStateValues` row with status Available. Earlier rows are
+        deleted if a later step fails.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties:
+                name: {type: string}
+                phone: {type: string}
+                customer_id: {type: string}
+                notes: {type: string}
+      responses:
+        "200":
+          description: Created customer
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+  /integrations/pos/samba/sources/{source}/customers/{id}:
+    get:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Get one POS customer by entity id
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Customer
+        "404":
+          description: No such customer
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+    patch:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Update a POS customer
+      description: >
+        Patches the entity. CustomData is rebuilt from the current row so
+        other custom fields are kept. The linked account is renamed when name
+        or phone changes. An empty `customer_id` removes that field.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                phone: {type: string}
+                customer_id: {type: string}
+                notes: {type: string}
+      responses:
+        "200":
+          description: Updated customer
+        "404":
+          description: No such customer
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+    delete:
+      tags: [Samba POS]
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      summary: Delete a POS customer (managers)
+      description: >
+        Deletes EntityStateValues, then Entities, then Accounts. Requires
+        founder, hosl or venue_manager.
+      parameters:
+        - $ref: "#/components/parameters/SambaSource"
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Deleted
+        "403":
+          description: Manager role required
+        "404":
+          description: No such customer
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
   /jobs/tier-decay-sweep:
     post:
       tags: [Jobs]
@@ -737,7 +1020,18 @@ components:
       type: apiKey
       in: header
       name: X-KP-API-Key
+    StaffBearer:
+      type: http
+      scheme: bearer
+      description: Supabase access token of an active staff member.
   parameters:
+    SambaSource:
+      name: source
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [oso-lounge, oso, boom-boom-room, bb-room, bbr]
     RequestID:
       name: X-Request-ID
       in: header
@@ -805,6 +1099,23 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SambaCustomer:
+      type: object
+      properties:
+        id: {type: integer, description: Samba Entities.Id}
+        name: {type: string}
+        phone: {type: string}
+        customer_id: {type: string}
+        custom_data:
+          type: array
+          items:
+            type: object
+            properties:
+              Name: {type: string}
+              Value: {type: string}
+        notes: {type: string}
+        account_id: {type: integer}
+        last_update_time: {type: string, description: Lagos till time with a trailing Z; not UTC}
     HealthResponse:
       type: object
       required: [ok, service]

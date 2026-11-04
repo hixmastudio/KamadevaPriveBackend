@@ -24,3 +24,11 @@ func ValidationError(details any) *AppError {
 func UpstreamError(message string, details any) *AppError {
 	return &AppError{Status: 502, Code: "upstream_error", Message: message, Details: details}
 }
+
+func Forbidden(message string) *AppError {
+	return &AppError{Status: 403, Code: "forbidden", Message: message}
+}
+
+func NotFound(message string) *AppError {
+	return &AppError{Status: 404, Code: "not_found", Message: message}
+}

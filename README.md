@@ -29,6 +29,10 @@ DDD + hexagonal layout:
 - `POST /integrations/pos/samba/tickets`
 - `GET /integrations/pos/samba/source-health`
 - `POST /integrations/pos/samba/pull-tickets`
+- `GET /integrations/pos/samba/sources/{source}/payments|sales-by-department|menu|staff|departments`
+- `GET /integrations/pos/samba/sources/{source}/db/tables[/{table}]`
+- `GET|POST /integrations/pos/samba/sources/{source}/customers`
+- `GET|PATCH|DELETE /integrations/pos/samba/sources/{source}/customers/{id}`
 - `POST /integrations/whatsapp/inbound`
 - `GET /webhooks/whatsapp`
 - `POST /webhooks/whatsapp`
@@ -42,6 +46,14 @@ All endpoints except `/health` require:
 
 ```http
 X-KP-API-Key: $API_SHARED_SECRET
+```
+
+The staff-facing Samba routes (sources, clean tickets, reference data and
+customers) also accept a Supabase access token of an active staff member, so
+the staff web app can call them directly:
+
+```http
+Authorization: Bearer <supabase access token>
 ```
 
 For Samba POS endpoints, set `SAMBA_WEBHOOK_SECRET` in production and send:
@@ -68,7 +80,7 @@ to `booking_received`.
 
 - Swagger/OpenAPI: `docs/openapi.yaml`
 - Samba POS extension contract: `docs/samba-pos-integration.md`
-- Oso Lounge Samba read API: `docs/oso-lounge-samba-api.md`
+- Oso Lounge & bb-room Samba API: `docs/oso-lounge-samba-api.md`
 - Production readiness notes: `docs/production-readiness.md`
 
 ## Local Run

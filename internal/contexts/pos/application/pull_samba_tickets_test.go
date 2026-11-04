@@ -19,7 +19,7 @@ func TestMapSourceTicketExcludesVoidsAndConvertsAmounts(t *testing.T) {
 		CreatedUserName:   "JOSEPHINE",
 		Orders: []posdomain.SambaSourceOrder{
 			{MenuItemName: "Voss Sparkling Water", PortionName: "Normal", Price: 9500, Quantity: 1, CalculatePrice: true},
-			{MenuItemName: "Voided Drink", PortionName: "Normal", Price: 1000, Quantity: 1, CalculatePrice: false, OrderStates: []map[string]any{{"S": "Void"}}},
+			{MenuItemName: "Voided Drink", PortionName: "Normal", Price: 1000, Quantity: 1, CalculatePrice: false, OrderStates: posdomain.SambaJSONList{{"S": "Void"}}},
 		},
 		Payments: []posdomain.SambaSourcePayment{
 			{PaymentTypeName: "Credit Card", Amount: 169875},
