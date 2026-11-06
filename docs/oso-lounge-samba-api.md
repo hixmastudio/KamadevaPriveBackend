@@ -449,3 +449,55 @@ SAMBA_DAILY_PULL_RUN_ON_START=false
 
 With the default lookback, the job imports yesterday's tickets once per day.
 Increase `SAMBA_DAILY_PULL_LOOKBACK_DAYS` when recovering from tunnel downtime.
+
+## Privé Members on the Till
+
+Every active Privé member is kept on both tills as a POS customer: the
+customer's name is the member's name and its **Customer ID** custom field is
+their `member_no` (`KP-000123`). The member sync is a reconciler, not an event
+stream. Each run reads all members from Supabase and all customers from the
+till, then fixes the difference:
+
+| Situation | What the sync does |
+| --- | --- |
+| Active member, no till customer | Creates one (Account, Entity, Available status) with Notes `Kamadeva Privé member` |
+| Active member, an unlinked till customer with the same phone | Adopts it: sets Customer ID and the member's name |
+| Active member, linked customer with a different name | Renames it (and its `Name-Phone` account) |
+| Erased member, or a `KP-` number nobody holds on a row the sync created | Deletes it; if Samba refuses because old tickets reference it, renames it `Former member` and clears its phone and Customer ID |
+| A `KP-` number nobody holds on a row typed by hand | Leaves it alone (`unknown_member_no`) |
+
+Safety rails: an empty member list aborts the run with no writes, and each run
+makes at most `*_MEMBER_SYNC_MAX_WRITES` till writes, so the first push spreads
+across a few runs. A missed run or a till outage heals on the next pass.
+
+```env
+SAMBA_MEMBER_SYNC_ENABLED=true
+SAMBA_MEMBER_SYNC_INTERVAL=5m
+SAMBA_MEMBER_SYNC_MAX_WRITES=100
+SAMBA_MEMBER_SYNC_RUN_ON_START=true
+BOOM_BOOM_ROOM_MEMBER_SYNC_ENABLED=true
+```
+
+Managers can read the last run with
+`GET /integrations/pos/samba/sources/{source}/member-sync` and start one with
+`POST /integrations/pos/samba/sources/{source}/member-sync/run`.
+
+## Receipts Booked to Members
+
+When a cashier selects a member's customer on a ticket, the ticket import
+(orchestrator or manual pull):
+
+1. stores the receipt as before through `pos_ingest_ticket`, now with the
+   customer's name as `bill_name`;
+2. looks up the selected customer's entity on the till to read its Customer ID;
+3. calls `pos_attribute_till_customer` (migration `0098`, service role only),
+   which records `pos_customer_entity_id` and `pos_customer_ref` on the ticket
+   and, when the Customer ID is an active member's number, writes the visit and
+   a `pos_webhook` ledger row and marks the ticket `attribution_method =
+   'till_customer'`. The tier engine recomputes from that row as it does for
+   any other bill.
+
+Attribution is idempotent (the ledger row is keyed on the ticket id), never
+fails an import, and is retried for already-imported tickets that are still
+unattributed, so a bill closed before the member reached the till is picked up
+on a later pull.

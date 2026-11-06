@@ -63,6 +63,7 @@ type SambaSourceRuntime struct {
 	Reference    posapp.SambaReferenceService
 	Customers    posapp.SambaCustomerService
 	Orchestrator *posapp.SambaTransactionOrchestrator
+	MemberSync   *posapp.SambaMemberSync
 }
 
 func NewServer(deps Dependencies) http.Handler {

@@ -220,6 +220,13 @@ func (s SambaCustomerService) Update(ctx context.Context, rawID string, req Upda
 	if err != nil {
 		return posdomain.SambaCustomer{}, err
 	}
+	return s.update(ctx, current, req)
+}
+
+// update applies req to a customer row already read from the till, so callers
+// holding a fresh customer list do not pay for another full scan.
+func (s SambaCustomerService) update(ctx context.Context, current posdomain.SambaCustomer, req UpdateSambaCustomerRequest) (posdomain.SambaCustomer, error) {
+	id := current.ID
 	updated := current
 	patch := map[string]any{}
 	if req.Name != nil {
@@ -281,6 +288,12 @@ func (s SambaCustomerService) Delete(ctx context.Context, rawID string) (DeleteS
 	if err != nil {
 		return DeleteSambaCustomerResult{}, err
 	}
+	return s.remove(ctx, customer, stateIDs)
+}
+
+// remove deletes a customer whose status rows are already known.
+func (s SambaCustomerService) remove(ctx context.Context, customer posdomain.SambaCustomer, stateIDs []int64) (DeleteSambaCustomerResult, error) {
+	id := customer.ID
 	for _, stateID := range stateIDs {
 		if _, err := s.db.DeleteRow(ctx, sambaEntityStateTable, stateID); err != nil && !isNotFound(err) {
 			return DeleteSambaCustomerResult{}, err
@@ -320,6 +333,14 @@ func (s SambaCustomerService) find(ctx context.Context, id int64) (posdomain.Sam
 	return posdomain.SambaCustomer{}, shareddomain.NotFound("Samba customer not found.")
 }
 
+// All returns every customer on the till.
+func (s SambaCustomerService) All(ctx context.Context) ([]posdomain.SambaCustomer, error) {
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	return s.allCustomers(ctx)
+}
+
 // allCustomers reads every Entities row (Samba has no server-side filter) and
 // keeps the customers. Rows come back newest first.
 func (s SambaCustomerService) allCustomers(ctx context.Context) ([]posdomain.SambaCustomer, error) {
@@ -330,6 +351,17 @@ func (s SambaCustomerService) allCustomers(ctx context.Context) ([]posdomain.Sam
 		}
 	})
 	return customers, err
+}
+
+// entityStateIndex maps every entity id to its EntityStateValues row ids, for
+// callers removing several customers in one pass.
+func (s SambaCustomerService) entityStateIndex(ctx context.Context) (map[int64][]int64, error) {
+	index := map[int64][]int64{}
+	err := s.scan(ctx, sambaEntityStateTable, func(row map[string]any) {
+		entityID := rowInt(row, "EntityId")
+		index[entityID] = append(index[entityID], rowInt(row, "Id"))
+	})
+	return index, err
 }
 
 func (s SambaCustomerService) entityStateIDs(ctx context.Context, entityID int64) ([]int64, error) {

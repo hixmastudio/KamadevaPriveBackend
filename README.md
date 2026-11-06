@@ -33,6 +33,8 @@ DDD + hexagonal layout:
 - `GET /integrations/pos/samba/sources/{source}/db/tables[/{table}]`
 - `GET|POST /integrations/pos/samba/sources/{source}/customers`
 - `GET|PATCH|DELETE /integrations/pos/samba/sources/{source}/customers/{id}`
+- `GET /integrations/pos/samba/sources/{source}/member-sync`
+- `POST /integrations/pos/samba/sources/{source}/member-sync/run`
 - `POST /integrations/whatsapp/inbound`
 - `GET /webhooks/whatsapp`
 - `POST /webhooks/whatsapp`
@@ -116,6 +118,14 @@ BOOM_BOOM_ROOM_ORCHESTRATOR_ENABLED=false
 BOOM_BOOM_ROOM_ORCHESTRATOR_POLL_INTERVAL=10s
 BOOM_BOOM_ROOM_ORCHESTRATOR_LOOKBACK_DAYS=1
 BOOM_BOOM_ROOM_ORCHESTRATOR_RUN_ON_START=false
+SAMBA_MEMBER_SYNC_ENABLED=false
+SAMBA_MEMBER_SYNC_INTERVAL=5m
+SAMBA_MEMBER_SYNC_MAX_WRITES=100
+SAMBA_MEMBER_SYNC_RUN_ON_START=true
+BOOM_BOOM_ROOM_MEMBER_SYNC_ENABLED=false
+BOOM_BOOM_ROOM_MEMBER_SYNC_INTERVAL=5m
+BOOM_BOOM_ROOM_MEMBER_SYNC_MAX_WRITES=100
+BOOM_BOOM_ROOM_MEMBER_SYNC_RUN_ON_START=true
 WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_BUSINESS_ACCOUNT_ID=

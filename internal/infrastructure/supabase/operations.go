@@ -50,6 +50,7 @@ func (o *Operations) SaveSambaTicket(ctx context.Context, ticket posdomain.Samba
 		"p_bank_name":            ticket.BankName,
 		"p_source":               "samba",
 		"p_external_id":          ticket.ExternalID,
+		"p_bill_name":            ticket.BillName,
 	}
 	var ticketID string
 	if err := o.rpc(ctx, "pos_ingest_ticket", body, &ticketID); err != nil {
@@ -58,8 +59,8 @@ func (o *Operations) SaveSambaTicket(ctx context.Context, ticket posdomain.Samba
 	return ticketID, nil
 }
 
-func (o *Operations) ExistingSambaTicketNumbers(ctx context.Context, venueID string, ticketNumbers []string) (map[string]bool, error) {
-	existing := map[string]bool{}
+func (o *Operations) ExistingSambaTickets(ctx context.Context, venueID string, ticketNumbers []string) (map[string]posdomain.ExistingSambaTicket, error) {
+	existing := map[string]posdomain.ExistingSambaTicket{}
 	unique := uniqueNonEmpty(ticketNumbers)
 	for start := 0; start < len(unique); start += 200 {
 		end := start + 200
@@ -68,20 +69,68 @@ func (o *Operations) ExistingSambaTicketNumbers(ctx context.Context, venueID str
 		}
 
 		var rows []struct {
-			TicketNo string `json:"ticket_no"`
+			ID           string  `json:"id"`
+			TicketNo     string  `json:"ticket_no"`
+			MemberID     *string `json:"member_id"`
+			MuseMemberID *string `json:"muse_member_id"`
 		}
 		if err := o.selectRows(ctx, "/pos_tickets", url.Values{
-			"select":    {"ticket_no"},
+			"select":    {"id,ticket_no,member_id,muse_member_id"},
 			"venue_id":  {"eq." + venueID},
 			"ticket_no": {"in.(" + postgrestTextList(unique[start:end]) + ")"},
 		}, &rows); err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
-			existing[strings.TrimSpace(row.TicketNo)] = true
+			existing[strings.TrimSpace(row.TicketNo)] = posdomain.ExistingSambaTicket{
+				ID:         row.ID,
+				Attributed: row.MemberID != nil || row.MuseMemberID != nil,
+			}
 		}
 	}
 	return existing, nil
+}
+
+func (o *Operations) AttributeTillCustomer(ctx context.Context, ticketID, memberNo string, entityID int64) (string, error) {
+	body := map[string]any{
+		"p_ticket_id": ticketID,
+		"p_member_no": memberNo,
+		"p_entity_id": nil,
+	}
+	if entityID > 0 {
+		body["p_entity_id"] = entityID
+	}
+	var memberID *string
+	if err := o.rpc(ctx, "pos_attribute_till_customer", body, &memberID); err != nil {
+		return "", err
+	}
+	if memberID == nil {
+		return "", nil
+	}
+	return *memberID, nil
+}
+
+// MembersForTill pages through every member. Merged rows are left out: they
+// were never separate people on the till, and their survivor carries on.
+func (o *Operations) MembersForTill(ctx context.Context) ([]posdomain.PriveMember, error) {
+	const pageSize = 1000
+	members := []posdomain.PriveMember{}
+	for offset := 0; ; offset += pageSize {
+		var rows []posdomain.PriveMember
+		if err := o.selectRows(ctx, "/members", url.Values{
+			"select": {"id,member_no,full_name,phone,status"},
+			"status": {"neq.merged"},
+			"order":  {"member_no.asc"},
+			"limit":  {fmt.Sprint(pageSize)},
+			"offset": {fmt.Sprint(offset)},
+		}, &rows); err != nil {
+			return nil, err
+		}
+		members = append(members, rows...)
+		if len(rows) < pageSize {
+			return members, nil
+		}
+	}
 }
 
 func (o *Operations) RunTierDecaySweep(ctx context.Context) error {

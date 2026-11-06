@@ -17,9 +17,10 @@ import (
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
 type SambaPullService struct {
-	source  posdomain.SambaTicketSource
-	tickets posdomain.TicketRepository
-	logger  *slog.Logger
+	source    posdomain.SambaTicketSource
+	tickets   posdomain.TicketRepository
+	customers *SambaCustomerIndex
+	logger    *slog.Logger
 }
 
 type PullSambaTicketsRequest struct {
@@ -38,6 +39,7 @@ type PullSambaTicketsResult struct {
 	Tickets         []ImportedSambaTicket        `json:"tickets"`
 	Failures        []FailedSambaTicketImport    `json:"failures,omitempty"`
 	Unmatched       int                          `json:"unmatched_customer_count"`
+	Attributed      int                          `json:"attributed_count"`
 	Health          *posdomain.SambaSourceHealth `json:"health,omitempty"`
 }
 
@@ -56,6 +58,13 @@ type FailedSambaTicketImport struct {
 
 func NewSambaPullService(source posdomain.SambaTicketSource, tickets posdomain.TicketRepository) SambaPullService {
 	return SambaPullService{source: source, tickets: tickets, logger: slog.Default()}
+}
+
+// WithCustomerIndex lets the pull book a ticket to the member selected on it
+// at the till, by reading that customer's "Customer ID" (their member_no).
+func (s SambaPullService) WithCustomerIndex(index *SambaCustomerIndex) SambaPullService {
+	s.customers = index
+	return s
 }
 
 func (s SambaPullService) Health(ctx context.Context) (posdomain.SambaSourceHealth, error) {
@@ -139,8 +148,16 @@ func (s SambaPullService) PullTickets(ctx context.Context, req PullSambaTicketsR
 
 	for _, sourceTicket := range sourceRange.Tickets {
 		ticketNumber := strings.TrimSpace(sourceTicket.TicketNumber)
-		if existing[ticketNumber] {
+		if prior, ok := existing[ticketNumber]; ok {
 			result.SkippedExisting++
+			// Imported before its customer was known to us (the member was
+			// put on the till after the bill, or the migration came later):
+			// attribute it now if the till names a member.
+			if !prior.Attributed {
+				if s.attribute(ctx, req.VenueID, prior.ID, sourceTicket, true) {
+					result.Attributed++
+				}
+			}
 			continue
 		}
 
@@ -170,6 +187,9 @@ func (s SambaPullService) PullTickets(ctx context.Context, req PullSambaTicketsR
 		}
 
 		result.Imported++
+		if s.attribute(ctx, req.VenueID, id, sourceTicket, false) {
+			result.Attributed++
+		}
 		result.Tickets = append(result.Tickets, ImportedSambaTicket{
 			SourceID:     sourceTicket.ID,
 			TicketNumber: sourceTicket.TicketNumber,
@@ -186,17 +206,56 @@ func (s SambaPullService) PullTickets(ctx context.Context, req PullSambaTicketsR
 		"skipped_existing_count", result.SkippedExisting,
 		"failed_count", result.Failed,
 		"unmatched_customer_count", result.Unmatched,
+		"attributed_count", result.Attributed,
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
 	return result, nil
 }
 
-func (s SambaPullService) existingTicketNumbers(ctx context.Context, venueID string, sourceTickets []posdomain.SambaSourceTicket) (map[string]bool, error) {
+// attribute books a saved ticket to the Privé member whose POS customer was
+// selected on it. Attribution never fails an import: the receipt is already
+// stored, and the next pull retries anything left unattributed.
+//
+// onlyMembers skips the database round trip for customers that are not ours,
+// which matters for already-imported tickets revisited on every poll.
+func (s SambaPullService) attribute(ctx context.Context, venueID, ticketID string, source posdomain.SambaSourceTicket, onlyMembers bool) bool {
+	if s.customers == nil || ticketID == "" {
+		return false
+	}
+	entity, ok := tillCustomer(source.Entities)
+	if !ok || entity.EntityID <= 0 {
+		return false
+	}
+	customer, found, err := s.customers.Lookup(ctx, entity.EntityID)
+	if err != nil {
+		s.logger.Warn("samba_pull_customer_lookup_failed", "venue_id", venueID, "ticket_number", source.TicketNumber, "entity_id", entity.EntityID, "error", err)
+		return false
+	}
+	ref := ""
+	if found {
+		ref = strings.ToUpper(strings.TrimSpace(customer.CustomerID))
+	}
+	if onlyMembers && !IsMemberNo(ref) {
+		return false
+	}
+	memberID, err := s.tickets.AttributeTillCustomer(ctx, ticketID, ref, entity.EntityID)
+	if err != nil {
+		s.logger.Warn("samba_pull_ticket_attribution_failed", "venue_id", venueID, "ticket_number", source.TicketNumber, "member_no", ref, "error", err)
+		return false
+	}
+	if memberID == "" {
+		return false
+	}
+	s.logger.Info("samba_pull_ticket_attributed", "venue_id", venueID, "ticket_number", source.TicketNumber, "member_no", ref, "member_id", memberID)
+	return true
+}
+
+func (s SambaPullService) existingTicketNumbers(ctx context.Context, venueID string, sourceTickets []posdomain.SambaSourceTicket) (map[string]posdomain.ExistingSambaTicket, error) {
 	numbers := make([]string, 0, len(sourceTickets))
 	for _, ticket := range sourceTickets {
 		numbers = append(numbers, ticket.TicketNumber)
 	}
-	return s.tickets.ExistingSambaTicketNumbers(ctx, venueID, numbers)
+	return s.tickets.ExistingSambaTickets(ctx, venueID, numbers)
 }
 
 func (s SambaPullService) saveSambaTicketWithRetry(ctx context.Context, ticket posdomain.SambaTicket, sourceTicket posdomain.SambaSourceTicket) (string, error) {
@@ -305,7 +364,11 @@ func mapSourceTicket(venueID string, source posdomain.SambaSourceTicket) (posdom
 	serviceCharge := sumServiceCharges(source.Calculations)
 	discount := sumDiscounts(source.Calculations)
 	externalID := pointerToNonEmpty(fmt.Sprintf("%d", source.ID))
-	acctNo, matchedCustomer := customerAccount(source.Entities)
+	var billName *string
+	customer, matchedCustomer := tillCustomer(source.Entities)
+	if matchedCustomer {
+		billName = pointerToNonEmpty(firstNonEmpty(customer.EntityName, customer.Notes))
+	}
 
 	return posdomain.SambaTicket{
 		VenueID:           venueID,
@@ -318,7 +381,7 @@ func mapSourceTicket(venueID string, source posdomain.SambaSourceTicket) (posdom
 		DiscountKobo:      pointerToInt64(nairaToKobo(discount)),
 		ChangeKobo:        pointerToInt64(0),
 		PaymentMethod:     paymentMethod,
-		AcctNo:            acctNo,
+		BillName:          billName,
 		ExternalID:        externalID,
 		VATKobo:           pointerToInt64(nairaToKobo(source.TotalAmount - source.TotalAmountPreTax)),
 	}, matchedCustomer
@@ -354,14 +417,17 @@ func firstEntityName(entities []posdomain.SambaSourceEntity, entityType string) 
 	return ""
 }
 
-func customerAccount(entities []posdomain.SambaSourceEntity) (*string, bool) {
+// tillCustomer finds the customer selected on a ticket. acct_no is left alone:
+// it is the settlement account printed on the receipt, not the guest.
+func tillCustomer(entities []posdomain.SambaSourceEntity) (posdomain.SambaSourceEntity, bool) {
 	for _, entity := range entities {
 		entityType := strings.ToLower(entity.EntityTypeName)
-		if strings.Contains(entityType, "customer") || strings.Contains(entityType, "account") || strings.Contains(entityType, "member") {
-			return pointerToNonEmpty(firstNonEmpty(entity.EntityName, entity.Notes)), true
+		if entity.EntityTypeID == posdomain.SambaCustomerEntityTypeID ||
+			strings.Contains(entityType, "customer") || strings.Contains(entityType, "account") || strings.Contains(entityType, "member") {
+			return entity, true
 		}
 	}
-	return nil, false
+	return posdomain.SambaSourceEntity{}, false
 }
 
 func sumServiceCharges(calculations []posdomain.SambaSourceCalculation) float64 {

@@ -78,6 +78,7 @@ type SambaSourceCalculation struct {
 
 type SambaSourceEntity struct {
 	EntityID       int64  `json:"entityId"`
+	EntityTypeID   int64  `json:"entityTypeId"`
 	EntityName     string `json:"entityName"`
 	EntityTypeName string `json:"entityTypeName"`
 	Notes          string `json:"notes"`

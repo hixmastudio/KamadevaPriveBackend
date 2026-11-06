@@ -38,6 +38,14 @@ type Config struct {
 	BoomBoomRoomOrchestratorInterval    time.Duration
 	BoomBoomRoomOrchestratorLookback    int
 	BoomBoomRoomOrchestratorOnStart     bool
+	SambaMemberSyncEnabled              bool
+	SambaMemberSyncInterval             time.Duration
+	SambaMemberSyncMaxWrites            int
+	SambaMemberSyncOnStart              bool
+	BoomBoomRoomMemberSyncEnabled       bool
+	BoomBoomRoomMemberSyncInterval      time.Duration
+	BoomBoomRoomMemberSyncMaxWrites     int
+	BoomBoomRoomMemberSyncOnStart       bool
 	WhatsAppAccessToken                 string
 	WhatsAppPhoneNumberID               string
 	WhatsAppBusinessAccountID           string
@@ -91,6 +99,14 @@ func Load() (Config, error) {
 		BoomBoomRoomOrchestratorInterval:    durationFromEnv("BOOM_BOOM_ROOM_ORCHESTRATOR_POLL_INTERVAL", 5*time.Minute),
 		BoomBoomRoomOrchestratorLookback:    intFromEnv("BOOM_BOOM_ROOM_ORCHESTRATOR_LOOKBACK_DAYS", 1),
 		BoomBoomRoomOrchestratorOnStart:     boolFromEnv("BOOM_BOOM_ROOM_ORCHESTRATOR_RUN_ON_START", false),
+		SambaMemberSyncEnabled:              boolFromEnv("SAMBA_MEMBER_SYNC_ENABLED", false),
+		SambaMemberSyncInterval:             durationFromEnv("SAMBA_MEMBER_SYNC_INTERVAL", 5*time.Minute),
+		SambaMemberSyncMaxWrites:            intFromEnv("SAMBA_MEMBER_SYNC_MAX_WRITES", 100),
+		SambaMemberSyncOnStart:              boolFromEnv("SAMBA_MEMBER_SYNC_RUN_ON_START", true),
+		BoomBoomRoomMemberSyncEnabled:       boolFromEnv("BOOM_BOOM_ROOM_MEMBER_SYNC_ENABLED", false),
+		BoomBoomRoomMemberSyncInterval:      durationFromEnv("BOOM_BOOM_ROOM_MEMBER_SYNC_INTERVAL", 5*time.Minute),
+		BoomBoomRoomMemberSyncMaxWrites:     intFromEnv("BOOM_BOOM_ROOM_MEMBER_SYNC_MAX_WRITES", 100),
+		BoomBoomRoomMemberSyncOnStart:       boolFromEnv("BOOM_BOOM_ROOM_MEMBER_SYNC_RUN_ON_START", true),
 		WhatsAppAccessToken:                 os.Getenv("WHATSAPP_ACCESS_TOKEN"),
 		WhatsAppPhoneNumberID:               os.Getenv("WHATSAPP_PHONE_NUMBER_ID"),
 		WhatsAppBusinessAccountID:           os.Getenv("WHATSAPP_BUSINESS_ACCOUNT_ID"),
@@ -177,6 +193,15 @@ func Load() (Config, error) {
 		if len(cfg.BoomBoomRoomSambaAPIKey) < 24 {
 			return Config{}, errors.New("BOOM_BOOM_ROOM_SAMBA_API_KEY must be at least 24 characters when set")
 		}
+	}
+	if cfg.SambaMemberSyncEnabled && cfg.SambaAPIURL == "" {
+		return Config{}, errors.New("SAMBA_MEMBER_SYNC_ENABLED needs SAMBA_API_URL and SAMBA_API_KEY")
+	}
+	if cfg.BoomBoomRoomMemberSyncEnabled && cfg.BoomBoomRoomSambaAPIURL == "" {
+		return Config{}, errors.New("BOOM_BOOM_ROOM_MEMBER_SYNC_ENABLED needs BOOM_BOOM_ROOM_SAMBA_API_URL and BOOM_BOOM_ROOM_SAMBA_API_KEY")
+	}
+	if cfg.SambaMemberSyncInterval < 30*time.Second || cfg.BoomBoomRoomMemberSyncInterval < 30*time.Second {
+		return Config{}, errors.New("member sync intervals must be at least 30s")
 	}
 	if cfg.BoomBoomRoomOrchestratorEnabled {
 		if !uuidPattern.MatchString(strings.TrimSpace(cfg.BoomBoomRoomVenueID)) {

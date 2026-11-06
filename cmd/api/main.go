@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hixmastudio/kamadeva-prive-backend/internal/config"
 	engagementapp "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/engagement/application"
 	engagementdomain "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/engagement/domain"
 	operationsapp "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/operations/application"
 	posapp "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/pos/application"
+	posdomain "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/pos/domain"
 	reportingapp "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/reporting/application"
 	"github.com/hixmastudio/kamadeva-prive-backend/internal/infrastructure/ai"
 	"github.com/hixmastudio/kamadeva-prive-backend/internal/infrastructure/samba"
@@ -38,7 +40,17 @@ func main() {
 		aiClient = ai.NewOpenAIClient(cfg.OpenAIAPIKey, cfg.OpenAIModel, openAIHTTPClient)
 	}
 	sambaClient := samba.NewClient(cfg.SambaAPIURL, cfg.SambaAPIKey, cfg.SambaCacheDir+"/oso-lounge", sambaHTTPClient)
-	sambaPull := posapp.NewSambaPullService(sambaClient, ops)
+	sambaCustomers := posapp.NewSambaCustomerService(sambaDatabase(sambaClient), slog.Default())
+	sambaCustomerIndex := posapp.NewSambaCustomerIndex(sambaCustomers, 5*time.Minute)
+	sambaPull := posapp.NewSambaPullService(sambaClient, ops).WithCustomerIndex(sambaCustomerIndex)
+	sambaMemberSync := posapp.NewSambaMemberSync(posapp.SambaMemberSyncConfig{
+		Enabled:    cfg.SambaMemberSyncEnabled,
+		SourceKey:  "oso-lounge",
+		SourceName: "Oso Lounge",
+		Interval:   cfg.SambaMemberSyncInterval,
+		MaxWrites:  cfg.SambaMemberSyncMaxWrites,
+		RunOnStart: cfg.SambaMemberSyncOnStart,
+	}, ops, sambaCustomers, sambaCustomerIndex, slog.Default())
 	orchestrator := posapp.NewSambaTransactionOrchestrator(posapp.SambaTransactionOrchestratorConfig{
 		Enabled:    cfg.SambaOrchestratorEnabled,
 		SourceKey:  "oso-lounge",
@@ -50,7 +62,17 @@ func main() {
 	}, sambaPull, slog.Default())
 
 	boomBoomClient := samba.NewClient(cfg.BoomBoomRoomSambaAPIURL, cfg.BoomBoomRoomSambaAPIKey, cfg.SambaCacheDir+"/boom-boom-room", sambaHTTPClient)
-	boomBoomPull := posapp.NewSambaPullService(boomBoomClient, ops)
+	boomBoomCustomers := posapp.NewSambaCustomerService(sambaDatabase(boomBoomClient), slog.Default())
+	boomBoomCustomerIndex := posapp.NewSambaCustomerIndex(boomBoomCustomers, 5*time.Minute)
+	boomBoomPull := posapp.NewSambaPullService(boomBoomClient, ops).WithCustomerIndex(boomBoomCustomerIndex)
+	boomBoomMemberSync := posapp.NewSambaMemberSync(posapp.SambaMemberSyncConfig{
+		Enabled:    cfg.BoomBoomRoomMemberSyncEnabled,
+		SourceKey:  "boom-boom-room",
+		SourceName: "Boom Boom Room",
+		Interval:   cfg.BoomBoomRoomMemberSyncInterval,
+		MaxWrites:  cfg.BoomBoomRoomMemberSyncMaxWrites,
+		RunOnStart: cfg.BoomBoomRoomMemberSyncOnStart,
+	}, ops, boomBoomCustomers, boomBoomCustomerIndex, slog.Default())
 	boomBoomOrchestrator := posapp.NewSambaTransactionOrchestrator(posapp.SambaTransactionOrchestratorConfig{
 		Enabled:    cfg.BoomBoomRoomOrchestratorEnabled,
 		SourceKey:  "boom-boom-room",
@@ -70,8 +92,9 @@ func main() {
 			Pull:         sambaPull,
 			CleanTickets: posapp.NewCleanSambaTicketService(sambaClient),
 			Reference:    posapp.NewSambaReferenceService(sambaClient, sambaClient),
-			Customers:    posapp.NewSambaCustomerService(sambaClient, slog.Default()),
+			Customers:    sambaCustomers,
 			Orchestrator: orchestrator,
+			MemberSync:   sambaMemberSync,
 		}
 	}
 	if boomBoomClient != nil {
@@ -82,8 +105,9 @@ func main() {
 			Pull:         boomBoomPull,
 			CleanTickets: posapp.NewCleanSambaTicketService(boomBoomClient),
 			Reference:    posapp.NewSambaReferenceService(boomBoomClient, boomBoomClient),
-			Customers:    posapp.NewSambaCustomerService(boomBoomClient, slog.Default()),
+			Customers:    boomBoomCustomers,
 			Orchestrator: boomBoomOrchestrator,
+			MemberSync:   boomBoomMemberSync,
 		}
 	}
 	handler := httpapi.NewServer(httpapi.Dependencies{
@@ -114,6 +138,12 @@ func main() {
 	}
 	orchestrator.Start(appCtx)
 	boomBoomOrchestrator.Start(appCtx)
+	if sambaClient != nil {
+		sambaMemberSync.Start(appCtx)
+	}
+	if boomBoomClient != nil {
+		boomBoomMemberSync.Start(appCtx)
+	}
 	posapp.NewSambaDailyPullScheduler(posapp.SambaDailyPullConfig{
 		Enabled:    cfg.SambaDailyPullEnabled,
 		VenueID:    cfg.SambaVenueID,
@@ -154,4 +184,13 @@ func main() {
 		}
 		log.Println("Kamadeva API stopped")
 	}
+}
+
+// sambaDatabase keeps an unconfigured till a nil interface rather than an
+// interface holding a nil *samba.Client, which would pass nil checks.
+func sambaDatabase(client *samba.Client) posdomain.SambaDatabase {
+	if client == nil {
+		return nil
+	}
+	return client
 }

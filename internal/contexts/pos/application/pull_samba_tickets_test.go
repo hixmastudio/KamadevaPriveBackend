@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	posdomain "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/pos/domain"
@@ -55,8 +57,11 @@ func TestMapSourceTicketExcludesVoidsAndConvertsAmounts(t *testing.T) {
 	if ticket.TableLabel == nil || *ticket.TableLabel != "VIP 4" {
 		t.Fatalf("table label = %#v", ticket.TableLabel)
 	}
-	if ticket.AcctNo == nil || *ticket.AcctNo != "KP-004521" {
-		t.Fatalf("account = %#v", ticket.AcctNo)
+	if ticket.BillName == nil || *ticket.BillName != "KP-004521" {
+		t.Fatalf("bill name = %#v", ticket.BillName)
+	}
+	if ticket.AcctNo != nil {
+		t.Fatalf("acct_no is the settlement account, got %#v", ticket.AcctNo)
 	}
 	if ticket.ServiceChargeKobo == nil || *ticket.ServiceChargeKobo != 50000 {
 		t.Fatalf("service charge = %#v", ticket.ServiceChargeKobo)
@@ -80,7 +85,7 @@ func TestPullSambaTicketsRequestValidation(t *testing.T) {
 
 func TestPullTicketsSkipsExistingTicketNumbers(t *testing.T) {
 	repo := &fakeTicketRepository{
-		existing: map[string]bool{"71357": true},
+		existing: map[string]posdomain.ExistingSambaTicket{"71357": {ID: "t-71357", Attributed: true}},
 	}
 	service := NewSambaPullService(fakeSambaTicketSource{
 		tickets: []posdomain.SambaSourceTicket{
@@ -112,8 +117,10 @@ func TestPullTicketsSkipsExistingTicketNumbers(t *testing.T) {
 }
 
 type fakeTicketRepository struct {
-	existing map[string]bool
-	saved    []posdomain.SambaTicket
+	existing   map[string]posdomain.ExistingSambaTicket
+	saved      []posdomain.SambaTicket
+	attributed []string
+	members    map[string]string
 }
 
 func (r *fakeTicketRepository) SaveSambaTicket(ctx context.Context, ticket posdomain.SambaTicket) (string, error) {
@@ -121,14 +128,19 @@ func (r *fakeTicketRepository) SaveSambaTicket(ctx context.Context, ticket posdo
 	return "ticket-id-" + ticket.TicketNo, nil
 }
 
-func (r *fakeTicketRepository) ExistingSambaTicketNumbers(ctx context.Context, venueID string, ticketNumbers []string) (map[string]bool, error) {
-	out := map[string]bool{}
+func (r *fakeTicketRepository) ExistingSambaTickets(ctx context.Context, venueID string, ticketNumbers []string) (map[string]posdomain.ExistingSambaTicket, error) {
+	out := map[string]posdomain.ExistingSambaTicket{}
 	for _, number := range ticketNumbers {
-		if r.existing[number] {
-			out[number] = true
+		if existing, ok := r.existing[number]; ok {
+			out[number] = existing
 		}
 	}
 	return out, nil
+}
+
+func (r *fakeTicketRepository) AttributeTillCustomer(ctx context.Context, ticketID, memberNo string, entityID int64) (string, error) {
+	r.attributed = append(r.attributed, fmt.Sprintf("%s:%s:%d", ticketID, memberNo, entityID))
+	return r.members[memberNo], nil
 }
 
 type fakeSambaTicketSource struct {
@@ -167,5 +179,62 @@ func sourceTicket(ticketNumber string) posdomain.SambaSourceTicket {
 		Orders: []posdomain.SambaSourceOrder{
 			{MenuItemName: "Voss Sparkling Water", PortionName: "Normal", Price: 9500, Quantity: 1, CalculatePrice: true},
 		},
+	}
+}
+
+func customerRow(id int64, name, customerID, notes string) map[string]any {
+	data := `[{"Name":"Phone","Value":"08031234567"}`
+	if customerID != "" {
+		data += `,{"Name":"Customer ID","Value":"` + customerID + `"}`
+	}
+	data += `]`
+	return map[string]any{"Id": float64(id), "EntityTypeId": float64(1), "Name": name, "CustomData": data, "Notes": notes, "AccountId": float64(id + 1000)}
+}
+
+func TestPullTicketsAttributesTheTillCustomer(t *testing.T) {
+	db := newFakeSambaDB()
+	db.tables["Entities"] = []map[string]any{
+		customerRow(4293, "Adaeze Okonkwo", "KP-000123", SambaMemberNotes),
+		customerRow(4294, "Alex PRO", "", ""),
+	}
+	index := NewSambaCustomerIndex(testCustomerService(db), 0)
+	repo := &fakeTicketRepository{
+		existing: map[string]posdomain.ExistingSambaTicket{
+			"100": {ID: "t-100", Attributed: false},
+			"101": {ID: "t-101", Attributed: false},
+		},
+		members: map[string]string{"KP-000123": "member-1"},
+	}
+	withCustomer := func(number string, entityID int64, name string) posdomain.SambaSourceTicket {
+		ticket := sourceTicket(number)
+		ticket.Entities = []posdomain.SambaSourceEntity{
+			{EntityTypeID: 2, EntityTypeName: "Tables", EntityName: "B14"},
+			{EntityTypeID: 1, EntityID: entityID, EntityTypeName: "Customers", EntityName: name},
+		}
+		return ticket
+	}
+	service := NewSambaPullService(fakeSambaTicketSource{tickets: []posdomain.SambaSourceTicket{
+		withCustomer("100", 4293, "Adaeze Okonkwo"), // imported earlier, member: attribute now
+		withCustomer("101", 4294, "Alex PRO"),       // imported earlier, not a member: leave alone
+		withCustomer("102", 4293, "Adaeze Okonkwo"), // new, member
+		withCustomer("103", 4294, "Alex PRO"),       // new, not a member: still recorded
+		sourceTicket("104"),                         // new, walk-in
+	}}, repo).WithCustomerIndex(index)
+
+	result, err := service.PullTickets(context.Background(), PullSambaTicketsRequest{
+		VenueID: "11111111-1111-4111-8111-111111111111", From: "2026-07-05", To: "2026-07-05",
+	})
+	if err != nil {
+		t.Fatalf("PullTickets error = %v", err)
+	}
+	if result.Attributed != 2 {
+		t.Fatalf("attributed = %d", result.Attributed)
+	}
+	want := "t-100:KP-000123:4293,ticket-id-102:KP-000123:4293,ticket-id-103::4294"
+	if got := strings.Join(repo.attributed, ","); got != want {
+		t.Fatalf("attribution calls = %s, want %s", got, want)
+	}
+	if bill := repo.saved[0].BillName; bill == nil || *bill != "Adaeze Okonkwo" {
+		t.Fatalf("bill name = %#v", bill)
 	}
 }

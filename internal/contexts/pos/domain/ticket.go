@@ -32,6 +32,7 @@ type SambaTicket struct {
 	AcctNo             *string           `json:"acct_no,omitempty"`
 	BankName           *string           `json:"bank_name,omitempty"`
 	ExternalID         *string           `json:"external_id,omitempty"`
+	BillName           *string           `json:"bill_name,omitempty"`
 }
 
 type SambaHeartbeat struct {

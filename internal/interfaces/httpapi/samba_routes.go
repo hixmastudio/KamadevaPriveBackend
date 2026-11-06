@@ -36,6 +36,33 @@ func (s *Server) sambaStaffRoutes() {
 	s.mux.HandleFunc("GET "+prefix+"/customers/{id}", s.staffAuth(s.getSambaCustomer))
 	s.mux.HandleFunc("PATCH "+prefix+"/customers/{id}", s.staffAuth(s.updateSambaCustomer))
 	s.mux.HandleFunc("DELETE "+prefix+"/customers/{id}", s.staffAuth(s.managerOnly(s.deleteSambaCustomer)))
+	s.mux.HandleFunc("GET "+prefix+"/member-sync", s.staffAuth(s.managerOnly(s.sambaMemberSyncStatus)))
+	s.mux.HandleFunc("POST "+prefix+"/member-sync/run", s.staffAuth(s.managerOnly(s.runSambaMemberSync)))
+}
+
+func (s *Server) sambaMemberSyncStatus(w http.ResponseWriter, r *http.Request) {
+	runtime, ok := s.sambaSource(w, r)
+	if !ok {
+		return
+	}
+	if runtime.MemberSync == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "running": false, "source_key": runtime.Key})
+		return
+	}
+	writeJSON(w, http.StatusOK, runtime.MemberSync.Status())
+}
+
+func (s *Server) runSambaMemberSync(w http.ResponseWriter, r *http.Request) {
+	runtime, ok := s.sambaSource(w, r)
+	if !ok {
+		return
+	}
+	if runtime.MemberSync == nil {
+		writeError(w, shareddomain.UpstreamError("Member sync is not configured for this till.", nil))
+		return
+	}
+	out, err := runtime.MemberSync.Run(r.Context(), "manual:"+principalFrom(r).StaffID)
+	writeResult(w, out, err)
 }
 
 func (s *Server) sambaPayments(w http.ResponseWriter, r *http.Request) {

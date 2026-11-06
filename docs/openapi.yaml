@@ -776,6 +776,29 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "502":
           $ref: "#/components/responses/UpstreamError"
+  /integrations/pos/samba/sources/{source}/member-sync:
+    get:
+      tags: [Samba POS]
+      summary: Status of the Privé member sync for this till (managers)
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      parameters:
+        - $ref: '#/components/parameters/SambaSource'
+      responses:
+        '200':
+          description: Last run, next run and settings
+  /integrations/pos/samba/sources/{source}/member-sync/run:
+    post:
+      tags: [Samba POS]
+      summary: Reconcile Privé members onto this till now (managers)
+      description: Creates, links, renames and removes till customers so every active member is on the till with their member_no as Customer ID.
+      security: [{ApiKeyAuth: []}, {StaffBearer: []}]
+      parameters:
+        - $ref: '#/components/parameters/SambaSource'
+      responses:
+        '200':
+          description: Counts of what the run changed
+        '502':
+          description: Till or Supabase unreachable
   /integrations/pos/samba/sources/{source}/customers/{id}:
     get:
       tags: [Samba POS]
