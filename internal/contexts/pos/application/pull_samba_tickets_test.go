@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	posdomain "github.com/hixmastudio/kamadeva-prive-backend/internal/contexts/pos/domain"
 )
@@ -121,6 +122,7 @@ type fakeTicketRepository struct {
 	saved      []posdomain.SambaTicket
 	attributed []string
 	members    map[string]string
+	latest     string
 }
 
 func (r *fakeTicketRepository) SaveSambaTicket(ctx context.Context, ticket posdomain.SambaTicket) (string, error) {
@@ -136,6 +138,10 @@ func (r *fakeTicketRepository) ExistingSambaTickets(ctx context.Context, venueID
 		}
 	}
 	return out, nil
+}
+
+func (r *fakeTicketRepository) LatestSambaTicketDate(ctx context.Context, venueID string) (string, error) {
+	return r.latest, nil
 }
 
 func (r *fakeTicketRepository) AttributeTillCustomer(ctx context.Context, ticketID, memberNo string, entityID int64) (string, error) {
@@ -236,5 +242,41 @@ func TestPullTicketsAttributesTheTillCustomer(t *testing.T) {
 	}
 	if bill := repo.saved[0].BillName; bill == nil || *bill != "Adaeze Okonkwo" {
 		t.Fatalf("bill name = %#v", bill)
+	}
+}
+
+func TestOrchestratorCatchesUpAfterAnOutage(t *testing.T) {
+	repo := &fakeTicketRepository{latest: "2026-11-01"}
+	o := NewSambaTransactionOrchestrator(SambaTransactionOrchestratorConfig{VenueID: "11111111-1111-4111-8111-111111111111", Lookback: 1},
+		NewSambaPullService(fakeSambaTicketSource{}, repo), nil)
+	o.now = func() time.Time { return time.Date(2026, 11, 6, 15, 0, 0, 0, time.UTC) }
+
+	req := o.pullRequest(context.Background(), SambaTransactionOrchestratorRunRequest{})
+	if req.From != "2026-11-01" || req.To != "2026-11-06" {
+		t.Fatalf("first pull after restart = %s..%s, want 2026-11-01..2026-11-06", req.From, req.To)
+	}
+
+	// A manual one-day pull must not mark the gap as filled.
+	if _, err := o.run(context.Background(), "manual", PullSambaTicketsRequest{VenueID: req.VenueID, From: "2026-11-06", To: "2026-11-06"}); err != nil {
+		t.Fatalf("manual run: %v", err)
+	}
+	if again := o.pullRequest(context.Background(), SambaTransactionOrchestratorRunRequest{}); again.From != "2026-11-01" {
+		t.Fatalf("after manual pull from = %s, want 2026-11-01", again.From)
+	}
+
+	// Once a scheduled pull succeeds, the next one is back to the lookback.
+	if _, err := o.run(context.Background(), "poll", req); err != nil {
+		t.Fatalf("poll run: %v", err)
+	}
+	o.now = func() time.Time { return time.Date(2026, 11, 6, 15, 1, 0, 0, time.UTC) }
+	if next := o.pullRequest(context.Background(), SambaTransactionOrchestratorRunRequest{}); next.From != "2026-11-06" {
+		t.Fatalf("steady state from = %s, want 2026-11-06", next.From)
+	}
+
+	// A very long outage is capped.
+	o.fetchedThrough = ""
+	repo.latest = "2026-01-01"
+	if capped := o.pullRequest(context.Background(), SambaTransactionOrchestratorRunRequest{}); capped.From != "2026-10-08" {
+		t.Fatalf("capped from = %s, want 2026-10-08", capped.From)
 	}
 }

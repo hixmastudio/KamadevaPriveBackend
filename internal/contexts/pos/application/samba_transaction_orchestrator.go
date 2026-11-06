@@ -27,7 +27,17 @@ type SambaTransactionOrchestrator struct {
 	mu      sync.Mutex
 	running bool
 	status  SambaTransactionOrchestratorStatus
+
+	// fetchedThrough is the last date a scheduled pull fetched successfully.
+	// Scheduled pulls start from it, so days missed while the till was
+	// unreachable are fetched on the first pull that gets through.
+	fetchedThrough string
+	now            func() time.Time
 }
+
+// maxCatchUpDays bounds how far back a catch-up reaches after an outage, so a
+// long one cannot turn every poll into a huge request to the till.
+const maxCatchUpDays = 30
 
 type SambaTransactionOrchestratorStatus struct {
 	Enabled      bool                    `json:"enabled"`
@@ -64,6 +74,7 @@ func NewSambaTransactionOrchestrator(cfg SambaTransactionOrchestratorConfig, ser
 		cfg:     cfg,
 		service: service,
 		logger:  logger,
+		now:     time.Now,
 		status: SambaTransactionOrchestratorStatus{
 			Enabled:    cfg.Enabled,
 			SourceKey:  cfg.SourceKey,
@@ -102,7 +113,7 @@ func (o *SambaTransactionOrchestrator) Status() SambaTransactionOrchestratorStat
 }
 
 func (o *SambaTransactionOrchestrator) Trigger(ctx context.Context, req SambaTransactionOrchestratorRunRequest) (PullSambaTicketsResult, error) {
-	pullReq := o.pullRequest(req)
+	pullReq := o.pullRequest(ctx, req)
 	return o.run(ctx, "manual", pullReq)
 }
 
@@ -113,7 +124,7 @@ func (o *SambaTransactionOrchestrator) loop(ctx context.Context) {
 			"source_name", o.cfg.SourceName,
 			"venue_id", o.cfg.VenueID,
 		)
-		_, _ = o.run(ctx, "startup", o.pullRequest(SambaTransactionOrchestratorRunRequest{}))
+		_, _ = o.run(ctx, "startup", o.pullRequest(ctx, SambaTransactionOrchestratorRunRequest{}))
 	}
 
 	ticker := time.NewTicker(o.cfg.Interval)
@@ -147,7 +158,7 @@ func (o *SambaTransactionOrchestrator) loop(ctx context.Context) {
 				"tick_at", at,
 				"next_run_at", nextRun,
 			)
-			_, _ = o.run(ctx, "poll", o.pullRequest(SambaTransactionOrchestratorRunRequest{}))
+			_, _ = o.run(ctx, "poll", o.pullRequest(ctx, SambaTransactionOrchestratorRunRequest{}))
 			o.logger.Info("samba_transaction_orchestrator_waiting",
 				"source", o.cfg.SourceKey,
 				"source_name", o.cfg.SourceName,
@@ -183,7 +194,7 @@ func (o *SambaTransactionOrchestrator) run(ctx context.Context, trigger string, 
 	)
 
 	result, err := o.service.PullTickets(ctx, req)
-	o.finishRun(result, err)
+	o.finishRun(trigger, req, result, err)
 	if err != nil {
 		o.logger.Error("samba_transaction_orchestration_failed",
 			"source", o.cfg.SourceKey,
@@ -215,18 +226,43 @@ func (o *SambaTransactionOrchestrator) run(ctx context.Context, trigger string, 
 	return result, nil
 }
 
-func (o *SambaTransactionOrchestrator) pullRequest(req SambaTransactionOrchestratorRunRequest) PullSambaTicketsRequest {
+func (o *SambaTransactionOrchestrator) pullRequest(ctx context.Context, req SambaTransactionOrchestratorRunRequest) PullSambaTicketsRequest {
 	venueID := firstNonEmpty(req.VenueID, o.cfg.VenueID)
-	from := req.From
-	to := req.To
-	if from == "" || to == "" {
-		now := time.Now()
-		toTime := now
-		fromTime := now.AddDate(0, 0, -o.cfg.Lookback+1)
-		from = fromTime.Format(time.DateOnly)
-		to = toTime.Format(time.DateOnly)
+	if req.From != "" && req.To != "" {
+		return PullSambaTicketsRequest{VenueID: venueID, From: req.From, To: req.To}
+	}
+	now := o.now()
+	to := now.Format(time.DateOnly)
+	from := now.AddDate(0, 0, -o.cfg.Lookback+1).Format(time.DateOnly)
+	if since := o.catchUpFrom(ctx, venueID); since != "" && since < from {
+		floor := now.AddDate(0, 0, -maxCatchUpDays+1).Format(time.DateOnly)
+		from = max(since, floor)
+		o.logger.Info("samba_transaction_orchestrator_catching_up",
+			"source", o.cfg.SourceKey,
+			"venue_id", venueID,
+			"from", from,
+			"to", to,
+		)
 	}
 	return PullSambaTicketsRequest{VenueID: venueID, From: from, To: to}
+}
+
+// catchUpFrom is the first date a scheduled pull still owes. After a restart
+// it falls back to the newest stored ticket, so an outage that spanned a
+// deploy is caught up too.
+func (o *SambaTransactionOrchestrator) catchUpFrom(ctx context.Context, venueID string) string {
+	o.mu.Lock()
+	since := o.fetchedThrough
+	o.mu.Unlock()
+	if since != "" {
+		return since
+	}
+	latest, err := o.service.LatestImportedDate(ctx, venueID)
+	if err != nil {
+		o.logger.Warn("samba_transaction_orchestrator_latest_ticket_lookup_failed", "source", o.cfg.SourceKey, "venue_id", venueID, "error", err)
+		return ""
+	}
+	return latest
 }
 
 func (o *SambaTransactionOrchestrator) beginRun(started time.Time) bool {
@@ -242,7 +278,7 @@ func (o *SambaTransactionOrchestrator) beginRun(started time.Time) bool {
 	return true
 }
 
-func (o *SambaTransactionOrchestrator) finishRun(result PullSambaTicketsResult, err error) {
+func (o *SambaTransactionOrchestrator) finishRun(trigger string, req PullSambaTicketsRequest, result PullSambaTicketsResult, err error) {
 	finished := time.Now()
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -257,6 +293,11 @@ func (o *SambaTransactionOrchestrator) finishRun(result PullSambaTicketsResult, 
 	}
 	o.status.LastError = nil
 	o.status.LastResult = &result
+	// Only a scheduled pull, which always starts from the owed date, may mark
+	// the gap as filled. A manual pull of one day must not skip the rest.
+	if trigger != "manual" && req.To > o.fetchedThrough {
+		o.fetchedThrough = req.To
+	}
 }
 
 func (o *SambaTransactionOrchestrator) setNextRun(next time.Time) {

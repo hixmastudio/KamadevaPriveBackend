@@ -110,6 +110,25 @@ func (o *Operations) AttributeTillCustomer(ctx context.Context, ticketID, member
 	return *memberID, nil
 }
 
+func (o *Operations) LatestSambaTicketDate(ctx context.Context, venueID string) (string, error) {
+	var rows []struct {
+		BusinessDate string `json:"business_date"`
+	}
+	if err := o.selectRows(ctx, "/pos_tickets", url.Values{
+		"select":   {"business_date"},
+		"venue_id": {"eq." + venueID},
+		"source":   {"eq.samba"},
+		"order":    {"occurred_at.desc"},
+		"limit":    {"1"},
+	}, &rows); err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return rows[0].BusinessDate, nil
+}
+
 // MembersForTill pages through every member. Merged rows are left out: they
 // were never separate people on the till, and their survivor carries on.
 func (o *Operations) MembersForTill(ctx context.Context) ([]posdomain.PriveMember, error) {

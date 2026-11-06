@@ -12,6 +12,9 @@ type TicketRepository interface {
 	// till's selected customer carries. It returns the member id, or "" when
 	// no active member has that number.
 	AttributeTillCustomer(ctx context.Context, ticketID, memberNo string, entityID int64) (string, error)
+	// LatestSambaTicketDate is the business date (YYYY-MM-DD) of the newest
+	// ticket stored for the venue, or "" when there is none.
+	LatestSambaTicketDate(ctx context.Context, venueID string) (string, error)
 }
 
 type ExistingSambaTicket struct {

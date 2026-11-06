@@ -67,6 +67,15 @@ func (s SambaPullService) WithCustomerIndex(index *SambaCustomerIndex) SambaPull
 	return s
 }
 
+// LatestImportedDate is the business date of the newest stored ticket for the
+// venue, or "" when none is stored or the service has no repository.
+func (s SambaPullService) LatestImportedDate(ctx context.Context, venueID string) (string, error) {
+	if s.tickets == nil {
+		return "", nil
+	}
+	return s.tickets.LatestSambaTicketDate(ctx, venueID)
+}
+
 func (s SambaPullService) Health(ctx context.Context) (posdomain.SambaSourceHealth, error) {
 	if s.source == nil {
 		return posdomain.SambaSourceHealth{}, shareddomain.UpstreamError("Samba API is not configured.", nil)
